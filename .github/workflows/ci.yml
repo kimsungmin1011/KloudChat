@@ -59,6 +59,9 @@ jobs:
       - name: Test phone media-query boundaries
         run: npx playwright test --config playwright.phone.config.ts --workers=1
 
+      - name: Test English audit authentication gates
+        run: npx playwright test --config playwright.i18n-gates.config.ts --workers=1
+
   api:
     name: API · lint, tests
     runs-on: ubuntu-latest
