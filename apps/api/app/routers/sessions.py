@@ -2746,7 +2746,13 @@ async def send_message(
             started_from=workspace.started_from,
         )
     calculation_required = (
-        session.kind is SessionKind.chat and calculation_policy.requires_calculation(content)
+        session.kind is SessionKind.chat and (
+            calculation_policy.requires_calculation(content)
+            or (
+                not payload.attachments
+                and _calculation_followup_required(history, outbound_history, session.id, content)
+            )
+        )
     )
     preflight_tool = _ncs_preflight_tool(
         {skill.catalog_key for skill in workspace.applied_skills}, tools,
@@ -3409,6 +3415,37 @@ _CALCULATION_INSTRUCTION = (
 _NCS_CALCULATION_INSTRUCTION = (
     "check_ncs_answer를 사용할 때 계산할 조건이 갖춰졌으면 decision=calculate를 사용하세요."
 )
+
+
+def _calculation_followup_required(
+    history: list[Message], outbound_bodies: list[str], session_id: str, content: str,
+) -> bool:
+    """Bind up to eight completed arithmetic pairs without certifying the answer."""
+    if (
+        not calculation_policy.is_calculation_followup(content)
+        or len(history) != len(outbound_bodies)
+    ):
+        return False
+    for index in range(len(history) - 2, max(-1, len(history) - 18), -2):
+        question, answer = history[index:index + 2]
+        if (
+            question.session_id != session_id or answer.session_id != session_id
+            or question.role is not Role.user or answer.role is not Role.assistant
+            or not answer.model
+            or (answer.routing or {}).get("answerOrigin") not in {None, "model"}
+            or any(
+                row.attachments or row.variants or row.artifact_ids or row.failure
+                for row in (question, answer)
+            )
+            or not calculation_policy.is_plain_numeric_answer(outbound_bodies[index + 1])
+        ):
+            return False
+        # Only the privacy-processed bodies establish a seed or a continuation.
+        if calculation_policy.requires_calculation(outbound_bodies[index]):
+            return True
+        if not calculation_policy.is_calculation_followup(outbound_bodies[index]):
+            return False
+    return False
 
 
 def _calculation_preflight_tool(tools: list[Tool]) -> str:

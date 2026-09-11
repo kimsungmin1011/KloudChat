@@ -24,13 +24,21 @@ calculator, and does not close the broader NCS quality issue #142.
 - Auto economy keeps the tool-capable quality model for these requests and shows
   the reason in both streamed and saved messages. Auto quality retains its existing
   classifier and model-selection behavior.
+- One explicit previous-result operation can continue a completed arithmetic
+  chain, for example adding a number or taking a percentage. The bounded check
+  uses only privacy-processed text from at most eight contiguous same-session
+  question/answer pairs, with a bare numeric or numeric-equation answer shape.
+  It rejects attachments, variants, artifacts, failed turns and non-model answers.
+  This shape check does not certify the previous answer's arithmetic correctness;
+  the model still supplies the new equation to an already-permitted calculator.
 
 Dates, version strings, code creation, translation, editing commands, explicitly
 missing inputs and declined calculation have negative regression cases. This is
 a conservative request classifier, not a general semantic guarantee. Attachments
-without an explicit request, anaphoric follow-ups, spelled-out numbers and inputs
-over the bound remain outside the required-calculation policy. Compare and document
-routes are not covered by this ordinary-chat gate.
+without an explicit request, general anaphoric follow-ups, prose-only previous
+answers, spelled-out numbers and inputs over the bound remain outside the
+required-calculation policy. Compare and document routes are not covered by this
+ordinary-chat gate.
 
 ## Verification
 

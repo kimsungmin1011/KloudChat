@@ -1,7 +1,7 @@
 """Conservative request-only cues for a required arithmetic tool call.
 
-This is not a semantic classifier: attachments, anaphoric follow-ups, spelled-out
-numbers and requests over the bound remain outside this policy. The direct
+This is not a semantic classifier: attachments, general anaphoric follow-ups,
+spelled-out numbers and requests over the bound remain outside this policy. The direct
 extractor copies only an explicit expression; it never builds a word-problem
 equation, evaluates arithmetic, or grants a tool permission.
 """
@@ -108,6 +108,22 @@ _DIRECT_NO_FILE = re.compile(
     r"(?:files?|artifacts?|documents?)|no\s+(?:files?|artifacts?|documents?))",
     re.IGNORECASE,
 )
+_FOLLOWUP_NUMBER = r"[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)"
+_PRIOR_KR = r"(?:그|이전|앞의|방금)\s*(?:결과|값|합계|답)"
+_PRIOR_EN = r"(?:(?:the\s+)?(?:previous|last|prior)|that)\s+(?:result|answer|total|value)"
+_FOLLOWUP_CORE = re.compile(
+    rf"(?:(?:그럼|그러면)\s*|(?:then|next),?\s+)?(?:please\s+)?(?:"
+    rf"{_PRIOR_KR}(?:에|에서|을|를)\s*{_FOLLOWUP_NUMBER}\s*(?:을|를|으로|로)?\s*"
+    r"(?:더해|빼|곱해|나눠|나누어)\s*(?:주세요|줘)|"
+    rf"{_PRIOR_KR}의\s*{_FOLLOWUP_NUMBER}\s*(?:%|퍼센트)(?:은|는)?\s*"
+    r"(?:얼마(?:야|인가요)?|구해\s*(?:주세요|줘))|"
+    rf"add\s+{_FOLLOWUP_NUMBER}\s+to\s+{_PRIOR_EN}|"
+    rf"subtract\s+{_FOLLOWUP_NUMBER}\s+from\s+{_PRIOR_EN}|"
+    rf"(?:multiply|divide)\s+{_PRIOR_EN}\s+by\s+{_FOLLOWUP_NUMBER}|"
+    rf"what\s+is\s+{_FOLLOWUP_NUMBER}\s*(?:%|percent)\s+of\s+{_PRIOR_EN})",
+    re.I,
+)
+_PLAIN_NUMBER = re.compile(rf"{_FOLLOWUP_NUMBER}\Z")
 
 
 def _mask_quoted_intent(text: str) -> str:
@@ -202,6 +218,61 @@ def _standalone_expression(request: str) -> bool:
     )
 
 
+def _has_non_positional_notation(text: str) -> bool:
+    return any(
+        unicodedata.category(character) == "No"
+        or unicodedata.decomposition(character).startswith(("<super>", "<sub>"))
+        for character in text
+    )
+
+
+def _answer_modifiers_only(remainder: str) -> bool:
+    clauses = [clause.strip() for clause in re.split(r"[.!?;\n]+", remainder) if clause.strip()]
+    if len(clauses) > 2:
+        return False
+    seen: set[str] = set()
+    for clause in clauses:
+        category = (
+            "format" if _DIRECT_FORMAT.fullmatch(clause)
+            else "no_file" if _DIRECT_NO_FILE.fullmatch(clause)
+            else None
+        )
+        if category is None or category in seen:
+            return False
+        seen.add(category)
+    return True
+
+
+def is_calculation_followup(request: str) -> bool:
+    """Recognize one explicit previous-result operation, never infer its operand.
+
+    This cue alone grants nothing: the caller must bind it to a completed,
+    same-session arithmetic chain. Other wording remains ordinary model routing.
+    """
+    if not isinstance(request, str) or len(request) > 1024 or _has_non_positional_notation(request):
+        return False
+    text = unicodedata.normalize("NFKC", request).strip().replace("−", "-")
+    matched = _FOLLOWUP_CORE.match(text)
+    return bool(matched and _answer_modifiers_only(text[matched.end():]))
+
+
+def is_plain_numeric_answer(answer: str) -> bool:
+    """Check a bare number/equation shape, not its truth or arithmetic result."""
+    if not isinstance(answer, str) or len(answer) > 1024 or _has_non_positional_notation(answer):
+        return False
+    text = unicodedata.normalize("NFKC", answer).strip().removesuffix(".").rstrip()
+    text = text.replace("×", "*").replace("÷", "/").replace("−", "-")
+    parts = [part.strip() for part in text.split("=")]
+    if len(parts) == 1:
+        return bool(_PLAIN_NUMBER.fullmatch(text))
+    return bool(
+        len(parts) == 2
+        and _PLAIN_NUMBER.fullmatch(parts[1])
+        and _EXPRESSION_CHARS.fullmatch(parts[0])
+        and direct_calculation_expression(parts[0]) is not None
+    )
+
+
 def direct_calculation_expression(request: str) -> str | None:
     """Copy one unambiguous user expression for an already-authorized calculator.
 
@@ -214,11 +285,7 @@ def direct_calculation_expression(request: str) -> str | None:
         return None
     # NFKC can turn powers or indices into adjacent digits (2² -> 22).
     # Leave these notations to the model; only positional digits are copied.
-    if any(
-        unicodedata.category(character) == "No"
-        or unicodedata.decomposition(character).startswith(("<super>", "<sub>"))
-        for character in request
-    ):
+    if _has_non_positional_notation(request):
         return None
     text = unicodedata.normalize("NFKC", request).strip()
     text = text.replace("×", "*").replace("÷", "/").replace("−", "-")
@@ -238,19 +305,8 @@ def direct_calculation_expression(request: str) -> str | None:
     remainder = text[literal.end():]
     suffix = _DIRECT_CORE_SUFFIX.match(remainder)
     remainder = remainder[suffix.end():] if suffix else remainder
-    clauses = [clause.strip() for clause in re.split(r"[.!?;\n]+", remainder) if clause.strip()]
-    if len(clauses) > 2:
+    if not _answer_modifiers_only(remainder):
         return None
-    seen: set[str] = set()
-    for clause in clauses:
-        category = (
-            "format" if _DIRECT_FORMAT.fullmatch(clause)
-            else "no_file" if _DIRECT_NO_FILE.fullmatch(clause)
-            else None
-        )
-        if category is None or category in seen:
-            return None
-        seen.add(category)
 
     # Match the calculator's literal/depth bounds without computing a result.
     nesting = 0

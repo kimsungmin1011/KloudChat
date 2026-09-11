@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from test_privacy import _external_model, _NoWriteDb, _patch_guard_dependencies, _request
 
-from app.models.chat import ChatSession, RoutingMode
+from app.models.chat import ChatSession, Message, Role, RoutingMode
 from app.models.governance import Governance
 from app.models.user import User
 from app.routers import sessions
@@ -18,12 +18,14 @@ from app.services.tools.ncs_check import CHECK_NCS_ANSWER
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", [RoutingMode.manual, RoutingMode.auto, RoutingMode.auto_quality])
 @pytest.mark.parametrize("tool", [CALCULATE, CHECK_NCS_ANSWER, None])
-@pytest.mark.parametrize("literal", [False, True])
+@pytest.mark.parametrize(
+    "request_kind", ["word_problem", "literal", "followup_add", "followup_percent"],
+)
 async def test_calculation_requirement_precedes_tool_free_routing_and_key_issue(
     monkeypatch,
     mode,
     tool,
-    literal,
+    request_kind,
 ):
     user = User(email="calculation@example.test", password_hash="hash", name="Learner")
     model = {
@@ -57,6 +59,31 @@ async def test_calculation_requirement_precedes_tool_free_routing_and_key_issue(
         models=[model, classifier, economy, upgrade],
         blocks=[],
     )
+    literal = request_kind == "literal"
+    if request_kind.startswith("followup"):
+        history = [
+            Message(session_id=session.id, role=Role.user, content=(
+                "NCS 수리 문제: 25 * 16을 계산해줘."
+                if tool is CHECK_NCS_ANSWER else "25 * 16은 얼마야?"
+            )),
+            Message(
+                session_id=session.id, role=Role.assistant,
+                content="25 * 16 = 400", model=model["id"],
+            ),
+        ]
+        if request_kind == "followup_percent":
+            history.extend([
+                Message(session_id=session.id, role=Role.user, content="그 결과에 25를 더해줘."),
+                Message(
+                    session_id=session.id, role=Role.assistant,
+                    content="400 + 25 = 425", model=model["id"],
+                ),
+            ])
+
+        async def stored_history(*_args):
+            return history
+
+        monkeypatch.setattr(sessions, "_history", stored_history)
     captured = {}
     keys = []
     classifications = []
@@ -105,9 +132,15 @@ async def test_calculation_requirement_precedes_tool_free_routing_and_key_issue(
     monkeypatch.setattr(sessions, "_run_turn", stream)
 
     request = SendMessage(
-        content=("NCS 수리 문제: " if tool is CHECK_NCS_ANSWER else "") + (
+        content=(
+            "그 결과에 25를 더해줘. 계산식과 답만 짧게 써줘. 파일은 만들지 마."
+            if request_kind == "followup_add" else
+            "그 합계의 20%는 얼마야? 계산식과 답만 짧게 써줘. 파일은 만들지 마."
+            if request_kind == "followup_percent" else
+            ("NCS 수리 문제: " if tool is CHECK_NCS_ANSWER else "") + (
             "17 * 23은 얼마야? 계산식과 답만 짧게 써줘. 파일은 만들지 마."
             if literal else "A팀 7명의 평균 68점, B팀 3명의 평균 92점이면 전체 평균은?"
+            )
         ),
         web_search=False,
     )
@@ -128,6 +161,12 @@ async def test_calculation_requirement_precedes_tool_free_routing_and_key_issue(
     assert [row["function"]["name"] for row in captured["tool_definitions"]] == [tool.name]
     assert "계산" in captured["messages"][0]["content"]
     assert captured["calculation_required"] is True
+    assert captured["messages"][-1] == {"role": "user", "content": request.content}
+    if request_kind.startswith("followup"):
+        wire = [
+            {"role": message.role.value, "content": message.content} for message in history
+        ] + [{"role": "user", "content": request.content}]
+        assert captured["messages"][-len(wire):] == wire
     assert captured["calculation_expression"] == (
         "17 * 23" if literal and tool is CALCULATE else None
     )
