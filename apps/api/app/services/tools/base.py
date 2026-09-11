@@ -28,6 +28,17 @@ class Tool:
     wants_context: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class SearchEvidence:
+    """Trusted builtin metadata: linked snippet/body presence, not truth or freshness.
+
+    Kept outside tool-result text so remote content cannot declare itself verified.
+    Only the in-process web-search parser constructs this value.
+    """
+
+    source_urls: tuple[str, ...]
+
+
 @dataclass(slots=True)
 class ToolResult:
     """What the loop feeds back to the model, plus what the UI should show."""
@@ -42,6 +53,7 @@ class ToolResult:
     #: A trusted in-process tool may finish the turn without another model hop.
     #: The loop applies the same output/privacy masking before showing this text.
     final_text: str | None = None
+    search_evidence: SearchEvidence | None = None
 
 
 @dataclass(slots=True)

@@ -15,6 +15,7 @@ import type {
   PrivacyRouting,
   MessageRouting,
   ToolResultAnswer,
+  FreshnessAbstention,
   CostRouting,
   DesignTokens,
   Session,
@@ -1656,6 +1657,7 @@ export type StreamEvent =
   | { type: 'privacy_route'; action: 'mask_external'; source: 'tool_output'; count: number }
   | ({ type: 'model_route' } & CostRouting)
   | ({ type: 'tool_result_answer' } & ToolResultAnswer)
+  | ({ type: 'freshness_abstention' } & FreshnessAbstention)
   /** Model comparison: one column's text, then that column's final bill. */
   | { type: 'variant'; model: string; text: string; actualModel?: string }
   | { type: 'variant_retract'; model: string; text: string }

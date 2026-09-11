@@ -1011,23 +1011,26 @@ export function Composer({
     // report or slides surface; agent chats and starting points keep it here.
     const handoff = kind === 'chat' && !sessionAgent && !sentStartingTemplate ? handoffSurface(text) : null
     if (handoff) {
+      let landedHandoffSessionId = sessionId
       void send(null, handoff, text, {
         projectId,
         webSearch: sentWebSearch,
         attachments: attachmentIds,
         attachmentNames: attachmentLabels,
         onSession: (id) => {
+          landedHandoffSessionId = id
           carriedComposer = heldComposer(id)
           navigate(`/s/${id}`, { replace: !sessionId })
         },
-      }).catch(() => {
+      }).catch((error: unknown) => {
+        const freshnessRefusal = errorCode(error) === 'freshness_verification_unavailable'
         setComposerRestore({
-          sessionId,
+          sessionId: freshnessRefusal ? landedHandoffSessionId : sessionId,
           value: text,
           attachments: sentAttachments,
           activatedSkillIds: sentSkillIds,
           startingTemplate: sentStartingTemplate,
-          error: '',
+          error: freshnessRefusal ? refusalSentence(errorCode(error), t) ?? '' : '',
         })
       })
       return
@@ -1068,7 +1071,7 @@ export function Composer({
         navigate(`/s/${id}`, { replace: true })
       },
     })
-      .catch(() => {
+      .catch((error: unknown) => {
         // A refusal happens before the server stores the turn; restore the
         // draft through the store (see `deliverChat`).
         setComposerRestore({
@@ -1077,7 +1080,10 @@ export function Composer({
           attachments: sentAttachments,
           activatedSkillIds: sentSkillIds,
           startingTemplate: sentStartingTemplate,
-          error: '',
+          error:
+            errorCode(error) === 'freshness_verification_unavailable'
+              ? refusalSentence(errorCode(error), t) ?? ''
+              : '',
         })
         // The session row was rolled back with the refused turn; hand the
         // pick back unless a newer one was chosen meanwhile.

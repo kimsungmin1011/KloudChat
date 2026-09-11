@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.models.chat import SessionKind
+from app.services.freshness import FRESHNESS_INSTRUCTION, without_quoted_transform_sources
 
 # Models leak Chinese Hanja into Korean prose; parenthesised glosses are allowed.
 _KOREAN_ONLY = (
@@ -247,6 +248,7 @@ def system_prompt(
     parts = [
         _SURFACE_DEFAULTS.get(kind, _SURFACE_DEFAULTS[SessionKind.chat]),
         _CORE_ACCURACY,
+        FRESHNESS_INSTRUCTION,
         _KOREAN_ONLY,
     ]
     # Chat only: document prompts carry their own rules, and the sample
@@ -354,11 +356,24 @@ _EXPLICIT_WEB_REQUEST = re.compile(
     r"\b(?:web\s*search|search\s+the\s+web|look\s+up|fact[- ]?check|research)\b",
     re.I,
 )
+_DECLINED_WEB_REQUEST = re.compile(
+    r"(?:웹\s*|외부\s*|인터넷\s*)?검색\s*(?:없이|금지|하지\s*(?:마|말)|안\s*(?:해|하))|"
+    r"\bwithout\s+(?:web\s+search|(?:external\s+)?search(?:ing)?|browsing)\b|"
+    r"\b(?:do\s+not|don't|never)\s+(?:search|browse|look\s+up)\b|"
+    r"\bno\s+(?:web\s+search|external\s+search|browsing)\b",
+    re.I,
+)
+
+
+def declines_web_search(request: str) -> bool:
+    """Conservative explicit opt-out; conflicting same-turn instructions stay offline."""
+    return bool(_DECLINED_WEB_REQUEST.search(without_quoted_transform_sources(request or "")))
 
 
 def requests_web_search(request: str) -> bool:
     """Whether the user's own words explicitly request external research."""
-    return bool(_EXPLICIT_WEB_REQUEST.search(request or ""))
+    text = without_quoted_transform_sources(request or "")
+    return not declines_web_search(request) and bool(_EXPLICIT_WEB_REQUEST.search(text))
 
 
 #: Facts that change with time — the auto toggle searches these unasked.
@@ -531,6 +546,8 @@ def search_plan(toggle: bool | str, request: str) -> tuple[bool, str | None]:
     `toggle` is `True` (search every turn), `False` (no web tools unless the words
     ask for research) or `"auto"` (tools offered; a search is forced only when the
     words ask for research or for something that changes with time)."""
+    if declines_web_search(request):
+        return False, None
     explicit = requests_web_search(request)
     weather = asks_weather(request)
     if toggle == "auto":

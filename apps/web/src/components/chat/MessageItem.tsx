@@ -255,6 +255,7 @@ function MessageItemInner({
   const model = models.find((m) => m.id === message.model)
   const toolAnswer = message.routing && 'answerOrigin' in message.routing &&
     message.routing.answerOrigin === 'tool_result' ? message.routing : null
+  const freshness = message.routing && 'freshness' in message.routing ? message.routing : null
   const routing = message.routing && 'action' in message.routing ? message.routing : null
   const actualModelChanged = Boolean(
     routing?.actualModel && routing.actualModel !== routing.requestedModels[0],
@@ -445,6 +446,19 @@ function MessageItemInner({
             {t('계산 도구 결과 · 0으로 나눌 수 없음')}
           </Badge>
         )}
+        {freshness && (
+          <Badge
+            tone="warn"
+            className="mb-2 max-w-full whitespace-normal! [overflow-wrap:anywhere]"
+            title={
+              freshness.freshness.reason === 'lookup_failed_or_empty'
+                ? t('검색이 실패했거나 확인 가능한 결과가 없어 서비스 정책으로 답변을 보류했습니다.')
+                : t('검증 수단을 사용할 수 없어 서비스 정책으로 답변을 보류했습니다.')
+            }
+          >
+            {t('서비스 정책 안내 · 최신 정보 검증 불가 · 모델 실행 없음')}
+          </Badge>
+        )}
         {routing && showRouting && routingBadges > 0 && (
           <button
             onClick={() => setBadgesOpen((o) => !o)}
@@ -533,6 +547,7 @@ function MessageItemInner({
           // Only while the turn is running and nothing is there to read yet.
           !failed &&
           !toolAnswer &&
+          !freshness &&
           streaming &&
           shown.length === 0 &&
           named.length === 0 && (
@@ -641,7 +656,8 @@ function MessageItemInner({
             </span>
             {message.usage && user?.preferences.showUsage !== false && (
               <span className={cn('ml-1 text-xs', toolAnswer && 'max-sm:ml-0 max-sm:basis-full')}>
-                {toolAnswer ? t('답변 모델 생성 없음') : model?.label ?? message.model} ·{' '}
+                {toolAnswer ? t('답변 모델 생성 없음')
+                  : freshness ? t('모델 실행 없음') : model?.label ?? message.model} ·{' '}
                 {message.usage.estimated ? '≈ ' : ''}
                 {formatTokens(message.usage.inputTokens)} in ·{' '}
                 {formatTokens(message.usage.outputTokens)} out ·{' '}
@@ -649,7 +665,7 @@ function MessageItemInner({
                   <span className="whitespace-nowrap">
                     {t('답변 {n} 크레딧').replace('{n}', message.usage.credits.toLocaleString())}
                   </span>
-                ) : message.usage.credits > 0 ? (
+                ) : freshness || message.usage.credits > 0 ? (
                   t('{n} 크레딧').replace('{n}', message.usage.credits.toLocaleString())
                 ) : (
                   <span

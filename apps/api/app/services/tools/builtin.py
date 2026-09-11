@@ -12,6 +12,7 @@ import re
 from datetime import date
 from html import unescape
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -19,7 +20,7 @@ from app.core import logs
 from app.core.config import settings
 from app.services import index_client, knowledge, netguard, settings_store
 from app.services.tools.arithmetic import CALCULATE
-from app.services.tools.base import Tool, ToolContext, ToolResult
+from app.services.tools.base import SearchEvidence, Tool, ToolContext, ToolResult
 from app.services.tools.ncs_check import CHECK_NCS_ANSWER
 
 log = logging.getLogger(__name__)
@@ -466,6 +467,26 @@ scrape = _scrape
 searxng = _searxng
 
 
+def _search_source_url(value: Any) -> str | None:
+    """A structurally usable HTTP(S) reference; network access remains netguard's job."""
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    if not url or "\\" in url or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+        return None
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        if parsed.username is not None or parsed.password is not None:
+            return None
+        # Accessing port validates nonnumeric and out-of-range ports.
+        _ = parsed.port
+    except ValueError:
+        return None
+    return url
+
+
 async def web_search(args: dict[str, Any]) -> ToolResult:
     query = str(args.get("query") or "").strip()
     if not query:
@@ -494,6 +515,16 @@ async def web_search(args: dict[str, Any]) -> ToolResult:
         )
     except (httpx.HTTPError, ValueError) as exc:
         return ToolResult(content=f"오류: 검색에 실패했습니다 ({exc}).", failed=True)
+    hits = [
+        {
+            **hit,
+            "url": url,
+            "title": hit.get("title") if isinstance(hit.get("title"), str) else "",
+            "snippet": hit.get("snippet") if isinstance(hit.get("snippet"), str) else "",
+        }
+        for hit in hits
+        if isinstance(hit, dict) and (url := _search_source_url(hit.get("url")))
+    ]
     if not hits:
         return ToolResult(
             content=f"'{query}' 에 대한 검색 결과가 없습니다.", detail="0개 결과", empty=True
@@ -515,10 +546,13 @@ async def web_search(args: dict[str, Any]) -> ToolResult:
     )
 
     lines = [f"'{query}' 검색 결과:\n"]
+    usable_sources: list[str] = []
     for i, hit in enumerate(hits):
         dated = f"게시일 {hit['published']} · " if hit.get("published") else ""
         lines.append(f"[{i + 1}] {hit['title']}\n{hit['url']}\n{dated}{hit['snippet']}")
-        body = bodies[i] if i < len(bodies) else ""
+        body = bodies[i] if i < len(bodies) and isinstance(bodies[i], str) else ""
+        if hit["snippet"].strip() or body.strip():
+            usable_sources.append(hit["url"])
         if body:
             lines.append(f"본문 발췌:\n{_truncate(body, 4000)}")
         lines.append("")
@@ -527,6 +561,9 @@ async def web_search(args: dict[str, Any]) -> ToolResult:
     return ToolResult(
         content="\n".join(lines),
         detail=f"{len(hits)}개 결과 · {scraped}개 본문 읽음",
+        # Link-only results remain useful for ordinary follow-up fetches, but
+        # cannot release the current-fact gate by their heading or URL alone.
+        search_evidence=SearchEvidence(tuple(usable_sources)) if usable_sources else None,
     )
 
 

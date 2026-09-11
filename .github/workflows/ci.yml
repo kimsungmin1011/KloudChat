@@ -47,6 +47,9 @@ jobs:
       - name: Install presentation test browser
         run: npx playwright install --with-deps chromium
 
+      - name: Test freshness policy feedback
+        run: npx playwright test --config playwright.freshness.config.ts --workers=1
+
       - name: Test slide presentation layout
         run: npx playwright test --config playwright.presentation.config.ts --workers=1
 

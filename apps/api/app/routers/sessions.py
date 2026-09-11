@@ -86,6 +86,7 @@ from app.services import (
     chart_code,
     design_templates,
     figures,
+    freshness,
     governance,
     grounding,
     imagegen,
@@ -110,6 +111,8 @@ from app.services import page as page_service
 from app.services import report as report_service
 from app.services.context import (
     build_messages,
+    declines_web_search,
+    requests_web_search,
     search_hints,
     search_plan,
     search_query,
@@ -2186,6 +2189,95 @@ async def _ask_before_writing(
     return JSONResponse({"pending": session.pending, "message": said})
 
 
+def _freshness_routing(reason: str) -> dict[str, Any]:
+    return {
+        "answerOrigin": "server_policy",
+        "actualModel": None,
+        "freshness": {"status": "unverified", "reason": reason},
+    }
+
+
+def _freshness_followup_index(history: list[Message], session_id: str, content: str) -> int | None:
+    """Bind a narrow nudge to contiguous, trusted policy-held turns in this session."""
+    if not freshness.is_same_fact_followup(content):
+        return None
+    for index in range(len(history) - 2, -1, -2):
+        question, answer = history[index : index + 2]
+        routing = answer.routing or {}
+        verification = routing.get("freshness") or {}
+        if (
+            question.session_id != session_id or answer.session_id != session_id
+            or question.role is not Role.user or answer.role is not Role.assistant
+            or answer.model is not None
+            or routing.get("answerOrigin") != "server_policy"
+            or routing.get("actualModel") is not None
+            or verification.get("status") != "unverified"
+        ):
+            return None
+        if freshness.fresh_fact_required(question.content):
+            return index
+        if not freshness.is_same_fact_followup(question.content):
+            return None
+    return None
+
+
+async def _freshness_refusal(
+    db: AsyncSession,
+    session: ChatSession,
+    *,
+    content: str,
+    stored_content: str,
+    attachment_rows: list[StoredFile],
+    attachment_meta: list[dict] | None,
+    retry_of: Message | None,
+    superseded: list[Message],
+    started_from: dict | None,
+) -> StreamingResponse:
+    """A durable server answer: no key provisioning, model, enrichment or ledger call."""
+    routing = _freshness_routing("verification_unavailable")
+    for stored in attachment_rows:
+        stored.session_id = session.id
+        db.add(stored)
+    if retry_of is not None:
+        for row in superseded:
+            await db.delete(row)
+        question = retry_of
+        question.failure = None
+        question.routing = routing
+    else:
+        question = Message(
+            session_id=session.id,
+            role=Role.user,
+            content=stored_content,
+            attachments=attachment_meta,
+            routing=routing,
+            started_from=started_from,
+        )
+    answer = Message(
+        session_id=session.id,
+        role=Role.assistant,
+        content=freshness.abstention_response(content),
+        model=None,
+        routing=routing,
+        usage={"inputTokens": 0, "outputTokens": 0, "credits": 0},
+    )
+    db.add(question)
+    db.add(answer)
+    session.updated_at = utcnow()
+    if not session.title:
+        session.title = chat_service.provisional_title(stored_content)
+    db.add(session)
+    await db.commit()
+
+    async def events() -> AsyncIterator[str]:
+        yield chat_service.sse({"type": "freshness_abstention", **routing})
+        yield chat_service.sse({"type": "delta", "text": answer.content})
+        yield chat_service.sse({"type": "usage", **answer.usage})
+        yield chat_service.sse({"type": "done", "messageId": answer.id})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
 def _plans_first(session: ChatSession) -> bool:
     """Whether this surface offers an outline before writing (report and slides)."""
     return session.kind in (SessionKind.report, SessionKind.slides)
@@ -2385,6 +2477,23 @@ async def send_message(
     # web tools are offered, and the tool the first hop must call. Resolved before
     # tools are built.
     effective_web_search, forced_tool = search_plan(payload.web_search, content)
+    fresh_followup_index = (
+        _freshness_followup_index(history, session.id, content)
+        if session.kind is SessionKind.chat and not payload.attachments else None
+    )
+    if (
+        fresh_followup_index is not None
+        and declines_web_search(history[fresh_followup_index].content)
+        and payload.web_search is not True
+        and not requests_web_search(content)
+    ):
+        # Auto is not renewed consent for the same explicitly offline question.
+        effective_web_search, forced_tool = False, None
+    fresh_fact = freshness.fresh_fact_required(content) or fresh_followup_index is not None
+    if fresh_fact and effective_web_search:
+        # The request is for a current fact, not for the model to decide whether
+        # verification is necessary. Availability is checked again after privacy.
+        forced_tool = "web_search"
     web_search_auto = payload.web_search == "auto" and forced_tool is None
     # An agent whose allowlist leaves web search out chose that on purpose. The toggle
     # is moot for it, and a 「웹 검색 없이 답합니다」 preamble on every answer would
@@ -2610,6 +2719,32 @@ async def send_message(
     )
 
     strict_local = bool(privacy_resolution and privacy_resolution.strict_local)
+    if fresh_fact and session.kind != SessionKind.chat:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "freshness_verification_unavailable",
+                "message": freshness.abstention_response(content),
+            },
+        )
+    if fresh_fact and (
+        strict_local
+        or not effective_web_search
+        or not any(t.name == "web_search" and t.source == "builtin" and t.read_only for t in tools)
+        or "ncs-arithmetic" in {skill.catalog_key for skill in workspace.applied_skills}
+        or settings.max_tool_hops < 1
+    ):
+        return await _freshness_refusal(
+            db,
+            session,
+            content=content,
+            stored_content=stored_content,
+            attachment_rows=rows,
+            attachment_meta=attachment_meta,
+            retry_of=retry_of,
+            superseded=superseded,
+            started_from=workspace.started_from,
+        )
     calculation_required = (
         session.kind is SessionKind.chat and calculation_policy.requires_calculation(content)
     )
@@ -2980,7 +3115,15 @@ async def send_message(
     tool_names = {t.name for t in tools}
     preset_call: tuple[str, dict[str, Any]] | None = None
     if forced_tool == "web_search" and "web_search" in tool_names:
-        preset_call = ("web_search", {"query": search_query(content), **search_hints(content)})
+        # Reuse only the history already processed by this turn's privacy decision.
+        # Never persist or append the earlier raw question as new prompt content.
+        lookup_content = (
+            outbound_history[fresh_followup_index]
+            if fresh_followup_index is not None else content
+        )
+        preset_call = (
+            "web_search", {"query": search_query(lookup_content), **search_hints(lookup_content)},
+        )
     elif forced_tool == "weather" and "weather" in tool_names:
         place = weather_location(content)
         if place:
@@ -3029,6 +3172,7 @@ async def send_message(
                 # `tool_choice` is not reliably obeyed); a weather question whose
                 # place the words do not name is left to the model, forced.
                 preset_call=preset_call,
+                freshness_request=content if fresh_fact else None,
                 force_tool=(
                     forced_tool
                     if forced_tool and preset_call is None and forced_tool in tool_names
@@ -3309,6 +3453,7 @@ async def _run_turn(
     calculation_expression: str | None = None,
     #: The server's own first call. See `agent.run_turn`.
     preset_call: tuple[str, dict[str, Any]] | None = None,
+    freshness_request: str | None = None,
     #: Values masked out of the user's own words this turn; the answer at rest
     #: masks these and secrets, and leaves public contact details readable.
     protected_values: frozenset[str] = frozenset(),
@@ -3327,6 +3472,7 @@ async def _run_turn(
     tool_output_findings: dict[tuple[str, str], int] = {}
     actual_model = model["id"]
     tool_result_answer = False
+    server_abstention = False
 
     # Set by the stop button, not by a closed socket.
     stopping = asyncio.Event()
@@ -3370,10 +3516,10 @@ async def _run_turn(
         # answer, not a leak. Only secrets come out.
         return masker(value, scope="tool")
 
-    if routing:
+    if routing and not freshness_request:
         # First event, so the model badge updates before any token.
         yield chat_service.sse({"type": "privacy_route", **routing})
-    if cost_routing:
+    if cost_routing and not freshness_request:
         yield chat_service.sse({"type": "model_route", **cost_routing})
     if skills_event:
         yield chat_service.sse(skills_event)
@@ -3402,6 +3548,7 @@ async def _run_turn(
                     if calculation_expression is not None else {}
                 ),
                 preset_call=preset_call,
+                **({"freshness_request": freshness_request} if freshness_request else {}),
             ),
             stopping,
         ):
@@ -3412,6 +3559,14 @@ async def _run_turn(
                 routing = {**(routing or {}), **{k: v for k, v in event.items() if k != "type"}}
                 routing.pop("costRouting", None)
                 yield chat_service.sse(event)
+                continue
+            if event["type"] == "freshness_abstention":
+                server_abstention = True
+                actual_model = None
+                cost_routing = None
+                routing = {**(routing or {}), **_freshness_routing(str(event["reason"]))}
+                routing.pop("costRouting", None)
+                yield chat_service.sse({"type": "freshness_abstention", **routing})
                 continue
             if event["type"] == "delta":
                 text_parts.append(event["text"])
@@ -3494,7 +3649,7 @@ async def _run_turn(
         yield chat_service.sse(_error_event("요청 처리 중 오류가 발생했습니다.", exc))
 
     # This is answer-generation scope; earlier classifier/search work keeps its audit.
-    skip_completion_work = tool_result_answer
+    skip_completion_work = tool_result_answer or server_abstention
     content = "".join(text_parts)
     if failed == "stopped" and not any(usage.values()) and not skip_completion_work:
         # A stopped stream never reaches the usage chunk; estimate, marked as one.
@@ -3864,6 +4019,17 @@ async def compare_models(
         )
         return resolved
     chosen = resolved.models
+
+    # Comparison has no retrieval tools. Do not fan an unverified current fact
+    # out to several models and mistake agreement for evidence.
+    if freshness.fresh_fact_required(content):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "freshness_verification_unavailable",
+                "message": freshness.abstention_response(content),
+            },
+        )
 
     # Headroom checked only after a possible collapse to strict-local.
     if not has_headroom(user, max(chosen, key=lambda m: m["creditCost"])):

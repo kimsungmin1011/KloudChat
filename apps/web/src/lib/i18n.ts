@@ -211,6 +211,15 @@ const EN: Record<string, string> = {
   '답변 {n} 크레딧': 'Answer: {n} credits',
   '계산기가 직접 반환한 오류입니다. 답변 생성 비용만 0이며, 앞선 Auto 분류나 검색의 실행 여부와 비용은 별도입니다.':
     'This error came directly from the calculator. Only answer generation costs zero; earlier Auto classification or search activity and costs are separate.',
+  '서비스 정책 안내 · 최신 정보 검증 불가 · 모델 실행 없음':
+    'Service policy notice · Current information unverified · No model execution',
+  '모델 실행 없음': 'No model execution',
+  '검증 수단을 사용할 수 없어 서비스 정책으로 답변을 보류했습니다.':
+    'The service withheld an answer because verification was unavailable.',
+  '검색이 실패했거나 확인 가능한 결과가 없어 서비스 정책으로 답변을 보류했습니다.':
+    'The service withheld an answer because search failed or returned no verifiable results.',
+  '최신 정보를 검증할 수 없어 요청을 진행하지 않았습니다. 검증 가능한 자료를 제공하거나 검색이 허용된 환경에서 다시 시도하세요.':
+    'The request was not run because current information could not be verified. Provide verifiable sources or retry in an environment where search is permitted.',
   '{name} 우선순위 올리기': 'Move {name} up',
   '{name} 우선순위 내리기': 'Move {name} down',
 
