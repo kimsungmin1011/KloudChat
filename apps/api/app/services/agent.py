@@ -819,10 +819,16 @@ async def run_turn(
                 })
                 continue
             if missed_preflight or acc.looped or acc.runaway or (closing and acc.calls):
-                note = (
-                    "문항 검산 절차를 완료하지 못해 정답이나 채점을 확정할 수 없습니다. "
-                    "다시 시도해 주세요."
-                )
+                if calculation_required and preflight_tool == "calculate":
+                    note = (
+                        "계산기의 검산을 완료하지 못해 수치 답변을 확정할 수 없습니다. "
+                        "필요한 값과 계산 조건을 확인해 주세요."
+                    )
+                else:
+                    note = (
+                        "문항 검산 절차를 완료하지 못해 정답이나 채점을 확정할 수 없습니다. "
+                        "다시 시도해 주세요."
+                    )
                 yield {
                     "type": "step",
                     "id": "preflight",

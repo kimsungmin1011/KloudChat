@@ -24,18 +24,24 @@ const priorRoute = {
 }
 
 /** All API responses are fixtures; a prior classifier is not answer-model generation. */
-async function mockAnswer(page: Page, saved: boolean, generated = false, live = true) {
+async function mockAnswer(
+  page: Page, saved: boolean, generated = false, live = true,
+  fixture?: { prompt: string; answer: string; step: string },
+) {
   const requests: Record<string, unknown>[] = []
   const unexpected: string[] = []
+  const requestText = fixture?.prompt ?? prompt
+  const responseText = fixture?.answer ?? answer
+  const stepLabel = fixture?.step ?? '계산 확인'
   page.on('pageerror', (error) => unexpected.push(`pageerror: ${error.message}`))
   const messages = [
-    { id: 'fixture-question', role: 'user', content: prompt, attachments: [], createdAt: now },
+    { id: 'fixture-question', role: 'user', content: requestText, attachments: [], createdAt: now },
     {
-      id: 'fixture-answer', role: 'assistant', content: answer, attachments: [],
+      id: 'fixture-answer', role: 'assistant', content: responseText, attachments: [],
       model: generated ? 'fixture/quality' : null,
       routing: generated ? privacy : { ...privacy, ...origin }, createdAt: now,
       usage: { inputTokens: generated ? 8 : 0, outputTokens: generated ? 4 : 0, credits: 0 },
-      steps: [{ id: 'h1_0', type: 'tool', label: '계산 확인', status: 'error' }],
+      steps: [{ id: 'h1_0', type: 'tool', label: stepLabel, status: 'error' }],
     },
   ]
   const row = {
@@ -90,9 +96,9 @@ async function mockAnswer(page: Page, saved: boolean, generated = false, live = 
           body: [
             { type: 'privacy_route', ...privacy },
             { type: 'model_route', ...priorRoute },
-            { type: 'step', id: 'h1_0', label: '계산 확인', status: 'error' },
+            { type: 'step', id: 'h1_0', label: stepLabel, status: 'error' },
             ...(!generated ? [{ type: 'tool_result_answer', ...origin }] : []),
-            { type: 'delta', text: answer },
+            { type: 'delta', text: responseText },
             { type: 'usage', ...messages[1].usage },
             { type: 'done' },
           ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''),
@@ -192,3 +198,55 @@ test('텍스트 스트리밍을 꺼도 출처 이벤트를 처리하고 답변 �
   await assertToolAnswer(page)
   expect(state.unexpected).toEqual([])
 })
+
+const calculationHold = '계산기의 검산을 완료하지 못해 수치 답변을 확정할 수 없습니다. 필요한 값과 계산 조건을 확인해 주세요.'
+const ncsHold = '문항 검산 절차를 완료하지 못해 정답이나 채점을 확정할 수 없습니다. 다시 시도해 주세요.'
+
+for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'mobile', width: 390, height: 844 },
+]) {
+  for (const context of ['calculation', 'ncs'] as const) {
+    test(`${viewport.name} ${context}: 검산 보류 문구를 스트림과 재조회에서 그대로 표시한다`, async ({ page }) => {
+      await page.setViewportSize(viewport)
+      const isCalculation = context === 'calculation'
+      const fixture = {
+        prompt: isCalculation ? '자료에서 수량을 찾아 합계를 계산해 줘.' : 'NCS 문항을 검산하고 채점해 줘.',
+        answer: isCalculation ? calculationHold : ncsHold,
+        step: isCalculation ? '계산 확인' : '문항 검산',
+      }
+      const state = await mockAnswer(page, false, true, true, fixture)
+      await page.context().routeWebSocket('**/*', (socket) => {
+        state.unexpected.push('WebSocket')
+        socket.close()
+      })
+      await page.context().route('**/*', (route) => {
+        if (new URL(route.request().url()).hostname === '127.0.0.1') return route.continue()
+        state.unexpected.push(`external ${route.request().url()}`)
+        return route.abort()
+      })
+      await page.goto(`/s/${sessionId}`)
+      await page.getByLabel('프롬프트 입력').fill(fixture.prompt)
+      await page.getByLabel('프롬프트 입력').press('Enter')
+      const hold = page.getByText(fixture.answer, { exact: true })
+      await expect(hold).toBeVisible()
+      await expect(hold).toBeInViewport()
+      await expect(page.getByText(isCalculation ? ncsHold : calculationHold, { exact: true })).toHaveCount(0)
+      await expect(page.getByText(badgeText, { exact: true })).toHaveCount(0)
+      await expect(page.getByText('답변 모델 생성 없음', { exact: false })).toHaveCount(0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+      if (process.env.CALCULATION_HOLD_SCREENSHOT_DIR) {
+        await page.evaluate(() => document.fonts.ready)
+        await page.screenshot({
+          path: `${process.env.CALCULATION_HOLD_SCREENSHOT_DIR}/${context}-hold-${viewport.name}.png`,
+          animations: 'disabled',
+        })
+      }
+      await page.reload()
+      await expect(hold).toBeVisible()
+      await expect(page.getByText(isCalculation ? ncsHold : calculationHold, { exact: true })).toHaveCount(0)
+      expect(state.requests.map((request) => request.content)).toEqual([fixture.prompt])
+      expect(state.unexpected).toEqual([])
+    })
+  }
+}
