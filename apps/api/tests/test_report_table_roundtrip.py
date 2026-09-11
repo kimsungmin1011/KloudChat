@@ -252,6 +252,92 @@ def test_plain_markdown_keeps_its_existing_empty_row_cleanup():
     ]
 
 
+@pytest.mark.parametrize("position", ["before", "after"])
+@pytest.mark.parametrize("separator", ["|  |  |", "| : | : |", "|  |  |\n|---|---|"])
+def test_unrelated_html_grid_does_not_change_markdown_table_boundaries(position, separator):
+    markup = "<table><tr><td>Unrelated</td><td>Grid</td></tr></table>"
+    source = f"| A | B |\n|---|---|\n| C | D |\n{separator}\n| E | F |"
+    paragraphs = "".join(f"<p>{line}</p>" for line in source.splitlines())
+    pieces = [markup, "<p>Separate.</p>", paragraphs]
+    if position == "after":
+        pieces.reverse()
+    section = richtext.normalise([{"format": "html", "content": "".join(pieces)}])[0]
+    actual = report_export._markdown_to_lines(section["content"], section["tables"])
+    expected = report_export._markdown_to_lines(section["content"])
+    assert actual == expected
+
+
+@pytest.mark.parametrize("separator", ["|  |  |", "| : | : |", "|  |  |\n|---|---|"])
+def test_unmatched_grid_prefix_does_not_change_markdown_table_boundaries(separator):
+    source = f"| A | B |\n|---|---|\n| C | D |\n{separator}\n| E | F |"
+    grid = richtext.Grid(rows=[[richtext.Cell("A"), richtext.Cell("B")]])
+    assert report_export._markdown_to_lines(source, [grid]) == report_export._markdown_to_lines(
+        source
+    )
+
+
+@pytest.mark.parametrize("format", ["docx", "hwpx", "pdf"])
+def test_mixed_html_and_markdown_exports_keep_the_original_plain_table_boundaries(format):
+    markup = (
+        "<table><tr><td>Unrelated</td><td>Grid</td></tr></table><p>Separate.</p>"
+        "<p>| A | B |</p><p>|---|---|</p><p>| C | D |</p><p>|  |  |</p><p>| E | F |</p>"
+    )
+    section = richtext.normalise([{"format": "html", "content": markup}])[0]
+    plain = {key: value for key, value in section.items() if key != "tables"}
+    export = getattr(report_export, f"to_{format}")
+    actual, expected = export("Mixed tables", [section]), export("Mixed tables", [plain])
+    if format == "pdf":
+        actual_pages = PdfReader(BytesIO(actual)).pages
+        expected_pages = PdfReader(BytesIO(expected)).pages
+        assert [page.get_contents().get_data() for page in actual_pages] == [
+            page.get_contents().get_data() for page in expected_pages
+        ]
+    else:
+        member = "word/document.xml" if format == "docx" else "Contents/section0.xml"
+        with ZipFile(BytesIO(actual)) as actual_zip, ZipFile(BytesIO(expected)) as expected_zip:
+            assert actual_zip.read(member) == expected_zip.read(member)
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+@pytest.mark.parametrize("separated", [False, True])
+def test_only_the_matched_table_keeps_structural_empty_rows(position, separated):
+    markup = "<table><tr><td rowspan='2' colspan='2'>Merged</td></tr><tr></tr></table>"
+    source = "| A | B |\n|---|---|\n| C | D |\n|  |  |\n| E | F |"
+    paragraphs = "".join(f"<p>{line}</p>" for line in source.splitlines())
+    pieces = [markup, "<p>Separate.</p>" if separated else "", paragraphs]
+    if position == "after":
+        pieces.reverse()
+    section = richtext.normalise([{"format": "html", "content": "".join(pieces)}])[0]
+    tables = [
+        payload
+        for kind, payload, *_ in report_export._markdown_to_lines(
+            section["content"], section["tables"]
+        )
+        if kind == "table"
+    ]
+    expected = [
+        payload for kind, payload, *_ in report_export._markdown_to_lines(source) if kind == "table"
+    ]
+    expected.insert(0 if position == "before" else len(expected), section["tables"][0])
+    assert tables == expected
+
+
+def test_adjacent_structural_grids_keep_their_own_empty_rows():
+    markup = (
+        "<table><tr><td rowspan='2' colspan='2'>First</td></tr><tr></tr></table>"
+        "<table><tr><td>Second</td><td>Table</td></tr><tr><td></td><td></td></tr></table>"
+    )
+    section = richtext.normalise([{"format": "html", "content": markup}])[0]
+    tables = [
+        payload
+        for kind, payload, *_ in report_export._markdown_to_lines(
+            section["content"], section["tables"]
+        )
+        if kind == "table"
+    ]
+    assert tables == section["tables"]
+
+
 def test_an_entirely_empty_html_table_still_emits_no_export_table():
     sections = richtext.normalise(
         [{"format": "html", "content": "<table><tr><td></td></tr></table>"}]

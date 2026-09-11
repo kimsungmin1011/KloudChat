@@ -303,6 +303,9 @@ def _markdown_to_lines(
     #: Numbering per list depth; deeper levels are cleared when a level closes.
     counts: dict[int, int] = {}
     rows: list[list[str]] = []
+    table_source: list[str] = []
+    plain_source: list[str] = []
+    last_row_offset = 0
     #: Grids for this section's tables, spent as they are matched.
     spare = list(grids or [])
     used: set[int] = set()
@@ -312,17 +315,32 @@ def _markdown_to_lines(
     fence: list[str] | None = None
     fence_lang = ""
 
-    def close_table() -> None:
-        nonlocal rows, ruled
+    def flush_plain() -> None:
+        if plain_source:
+            # An unmatched run keeps the original Markdown rule-row semantics.
+            # No grids are passed, so this fallback cannot recurse again.
+            out.extend(_markdown_to_lines("\n".join(plain_source)))
+            plain_source.clear()
+
+    def close_table(*, final: bool = True) -> None:
+        nonlocal rows, ruled, table_source
         ruled = False
         if rows:
             width = max(len(row) for row in rows)
             padded = [row + [""] * (width - len(row)) for row in rows]
             found = _matched(padded, spare, used)
-            # Only a matched HTML grid carries intentional empty/covered rows.
-            plain = [row for row in padded if any(cell.strip() for cell in row)]
-            out.append(("table", found or _as_grid(plain), "", 0))
-            rows = []
+            if found is not None:
+                flush_plain()
+                out.append(("table", found, "", 0))
+            elif spare:
+                plain_source.extend(table_source)
+            else:
+                plain = [row for row in padded if any(cell.strip() for cell in row)]
+                out.append(("table", _as_grid(plain), "", 0))
+        rows = []
+        table_source = []
+        if final:
+            flush_plain()
 
     for raw in (text or "").splitlines():
         line = raw.rstrip()
@@ -379,14 +397,21 @@ def _markdown_to_lines(
             # A second rule row starts a new table whose head is the row just read.
             if ruled:
                 head = rows.pop()
-                close_table()
+                head_source = table_source[last_row_offset:]
+                table_source = table_source[:last_row_offset]
+                close_table(final=False)
                 rows.append(head)
+                table_source.extend(head_source)
+                last_row_offset = 0
+            table_source.append(line)
             ruled = True
             continue
         if _ROW.match(line):
             number = 0
             counts.clear()
             rows.append(_cells(line))
+            last_row_offset = len(table_source)
+            table_source.append(line)
             continue
         close_table()
         if picture := _IMAGE.match(line):
