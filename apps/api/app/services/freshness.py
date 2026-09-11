@@ -135,6 +135,14 @@ def is_same_fact_followup(request: str) -> bool:
     return bool(_SAME_FACT_FOLLOWUP.fullmatch(text.strip()))
 
 
+def _word_apostrophe(text: str, index: int) -> bool:
+    """Do not treat an English contraction's apostrophe as an opening quote."""
+    if text[index] != "'" or not 0 < index < len(text) - 1:
+        return False
+    before, after = text[index - 1], text[index + 1]
+    return before.isascii() and before.isalpha() and after.isascii() and after.isalpha()
+
+
 def _quoted_spans(text: str) -> Iterator[tuple[int, int]]:
     """Match the first closing delimiter without rescanning unmatched suffixes."""
     length = len(text)
@@ -143,7 +151,7 @@ def _quoted_spans(text: str) -> Iterator[tuple[int, int]]:
     index = 0
     while index < length:
         closing = _QUOTE_PAIRS.get(text[index])
-        if closing is None:
+        if closing is None or _word_apostrophe(text, index):
             index += 1
             continue
         end = next_closing.get(closing, -1)
