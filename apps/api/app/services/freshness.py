@@ -81,7 +81,7 @@ _TRANSFORM_AFTER = re.compile(
 )
 _CLAUSE = re.compile(
     r"[.!?;\n]|\b(?:and|but|also)\b|그리고|하지만|그런데|(?:와|과)\s+|"
-    r"고\s+(?=현재|지금|실제|대한민국|한국|국무총리|대통령|총리)",
+    r"(?:고\s+|(?<=고)\s*[,，]\s*)(?=현재|지금|실제|대한민국|한국|국무총리|대통령|총리)",
     re.I,
 )
 _SUPPLIED_TEXT = re.compile(
