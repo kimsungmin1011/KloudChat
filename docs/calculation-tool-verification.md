@@ -14,7 +14,9 @@ calculator, and does not close the broader NCS quality issue #142.
   after bounded AST validation. The server neither evaluates it nor invents a
   word-problem equation. For other recognized requests the model supplies the
   expression, while a successful arithmetic tool result gates the answer.
-- The required first stage exposes only the required tool schema. General
+- Initially the required first stage exposed only the required tool schema. The
+  prerequisite-read follow-up below allows permitted reads for missing operands
+  in ordinary non-literal calculations while retaining mandatory verification. General
   arithmetic can verify multiple expressions; the existing NCS gate remains
   exclusive. Successful duplicate calls reuse per-turn evidence without executing
   the same calculation again. Failed calls do not unlock the answer.
@@ -225,6 +227,55 @@ read-only data and stopped database state were preserved. The harness explicitly
 stubbed title generation and disabled memory; its HTTPX transport allowlist is
 not an OS firewall or physical-locality attestation. One fixed chain does not
 establish general accuracy, prior-answer truth, or model-only causal improvement.
+
+## Read-before-calculation follow-up
+
+Source `d788dea396398673d307ecdb04fe39a2f285e77c` restores a missing tool
+dependency: an Agent or selected Skill may need to retrieve quantities before it
+can form an arithmetic expression. Previously the calculator-only first schema
+hid already-permitted retrieval tools, even when the necessary source was present.
+
+For ordinary required calculations without a literal or trusted preset, the
+caller-provided, allowed tools classified as read-only may precede calculation.
+They cannot satisfy the arithmetic gate. A mixed dependent read/calculation batch,
+failed or empty read, and an attempted answer before verified calculation are
+held. A read's terminal text cannot unlock a numeric answer. After calculation
+starts, its existing exclusive verification/repair path remains. Literal, NCS,
+trusted search presets, permissions, privacy snapshots and tool-hop limits remain.
+MCP blank responses and knowledge no-result responses preserve their empty flag.
+
+The new 22 cases reproduce 12 failures and 10 passes before the change, then all
+pass. Standalone offline API: 2,969 passed and one existing skip; focused agent/tool
+suite: 719 passed; Ruff passed. Independent 25-case verification includes parallel
+reads before calculation, failed-calculator read reentry refusal and sanitization.
+The integrated existing freshness/calculation plus new controls pass 76 cases.
+
+An actual API replay used the same synthetic Agent Markdown (product 101 has 7
+units, product 102 has 9), questions and callback on frozen baseline `f442f385`
+and integrated candidate `2633d4f7`:
+
+| Case | Baseline | Candidate |
+| --- | --- | --- |
+| Retrieve quantities and total them | No retrieval; invalid expression then irrelevant `0+0`; final answer falsely said no data was provided | `search_knowledge` then `calculate(7+9)`, final equation and 16 units correct |
+| Literal `12 / 3` | Calculator once, correct 4, no read | Calculator once, correct 4, no read |
+| Agent without calculator permission | 409, empty transcript, no model/tool | Same refusal contract |
+
+Baseline six and candidate four completion attempts are for these three fixed
+cases, not an accuracy denominator. Candidate has one successful read and two
+successful calculators, no repair or tool failure; both runs measured zero app
+credit delta. Stored and streamed text/IDs agree, synthetic source extraction was
+checked, no remote MCP/vector index was used, and temporary resources/original
+data/source SHA were preserved. Actual tools ran through the authenticated API;
+this was not a UI test or a physical-locality/provider-cost attestation.
+
+The runtime uses the existing configured `read_only` contract, not independent
+proof of what a connector does. It does not introduce a new effect classification
+or permission grant. Ordinary word problems may now expose permitted reads even
+when the model does not need them; the model must still select appropriately.
+Two sequential lookup hops leave no room for calculation under a two-hop limit
+and therefore cannot produce a verified answer. A successful calculator still
+does not prove that its operands came from the right source or answer every NCS
+reasoning requirement. These bounded checks are not a general accuracy estimate.
 
 ## Remaining limits
 
