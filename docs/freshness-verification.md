@@ -104,6 +104,16 @@ not three factual answers or proof of external-search reauthorization.
   4,620 transformation contexts with the pre-fix parser, with no behavior change.
   The parser does not truncate requests or lose their trailing instructions.
   GitHub CodeQL is rerun independently; local tests alone do not establish its result.
+- The calendar-boundary follow-up only treats a year-qualified "present" as a
+  historical snapshot after that year has ended (UTC). An explicit current-year
+  question no longer loses its freshness requirement. `as_of` is an internal test
+  clock, not an API parameter or a claim about the model's training date.
+  Three actual request-path regressions failed before the fix in manual, economy
+  and quality modes; all now hold before key/model/accounting work. Added 36 cases
+  cover changing years, mixed questions, numeric boundaries and existing task
+  exceptions. Offline API: 2,762 passed, 1 skipped; independent freshness suite:
+  325 passed. This follow-up has deterministic proof, not a new standalone live
+  provider result.
 
 ![No model execution on mobile](screenshots/freshness-policy-mobile.png)
 
