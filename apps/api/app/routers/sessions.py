@@ -4059,7 +4059,10 @@ async def compare_models(
 
     # Comparison has no retrieval tools. Do not fan an unverified current fact
     # out to several models and mistake agreement for evidence.
-    if freshness.fresh_fact_required(content):
+    if freshness.fresh_fact_required(content) or (
+        not payload.attachments
+        and _freshness_followup_index(history, session.id, content) is not None
+    ):
         return JSONResponse(
             status_code=409,
             content={
