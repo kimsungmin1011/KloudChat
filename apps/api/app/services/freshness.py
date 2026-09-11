@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterator
+from datetime import UTC, date, datetime
 
 FRESHNESS_INSTRUCTION = (
     "The system date does not prove that your knowledge is current. Never invent a training "
@@ -88,7 +89,7 @@ _SUPPLIED_TEXT = re.compile(
     r"summarize\s+only\s+this\s+supplied\s+text)\s*:",
     re.I,
 )
-_DATED_PRESENT = re.compile(r"((?:1\d{3}|20\d{2})\s*년)\s*현재")
+_DATED_PRESENT = re.compile(r"(?<!\d)((1\d{3}|20\d{2})\s*년)\s*현재")
 _NEGATED_PRESENT = re.compile(r"(?:현재|지금|현직)(?:가|이)?\s*아니라")
 _DECLINED_FACT = re.compile(
     r"(?:말|답|설명)하지\s*(?:마|말)|알려\s*주지\s*(?:마|말)|"
@@ -184,12 +185,13 @@ def without_quoted_transform_sources(text: str) -> str:
     return "".join(parts)
 
 
-def fresh_fact_required(request: str) -> bool:
+def fresh_fact_required(request: str, *, as_of: date | None = None) -> bool:
     """Whether this explicit political question needs current evidence before answering.
 
     Call with the latest user's request, not the assembled system/history/reference
     envelope. False means outside this bounded gate, never proven factually safe.
     """
+    reference_year = (as_of or datetime.now(UTC).date()).year
     text = without_quoted_transform_sources(unicodedata.normalize("NFC", request or ""))
     supplied_text = False
     for part in _CLAUSE.split(text):
@@ -222,8 +224,12 @@ def fresh_fact_required(request: str) -> bool:
             declined and not _AFFIRMATIVE_REQUEST.search(clause[: declined.start()])
         ):
             continue
-        # "2020년 현재" asks about that dated snapshot, not the present day.
-        live = bool(_LIVE.search(_NEGATED_PRESENT.sub("", _DATED_PRESENT.sub(r"\1", clause))))
+        # Only a completed year establishes a past snapshot; this year's date
+        # is not evidence that model knowledge is current.
+        dated = _DATED_PRESENT.sub(
+            lambda match: match[1] if int(match[2]) < reference_year else match[0], clause
+        )
+        live = bool(_LIVE.search(_NEGATED_PRESENT.sub("", dated)))
         if not live and _HISTORICAL.search(clause):
             continue
         office_match = _OFFICE.search(clause)
