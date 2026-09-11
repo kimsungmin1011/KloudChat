@@ -114,9 +114,9 @@ export function SectionEditor({
   onMount?: (editor: Editor | null) => void
   onChange?: (html: string) => void
 }) {
-  // Tiptap's own serialisation of the input; `getHTML()` differs from the raw
-  // string, so changes are measured against this rather than `html`.
-  const pristine = useRef<string | null>(null)
+  // Compare with the last emitted serialisation, not just the initial input:
+  // undoing or toggling back to the original content is also a real update.
+  const lastHtml = useRef<string | null>(null)
   const onReadyRef = useRef(onReady)
   const onMountRef = useRef(onMount)
   useEffect(() => {
@@ -132,12 +132,13 @@ export function SectionEditor({
     editable,
     immediatelyRender: false,
     onCreate: ({ editor: live }) => {
-      pristine.current = live.getHTML()
+      lastHtml.current = live.getHTML()
       onMountRef.current?.(live)
     },
     onUpdate: ({ editor: live }) => {
       const next = live.getHTML()
-      if (pristine.current === null || next === pristine.current) return
+      if (lastHtml.current === null || next === lastHtml.current) return
+      lastHtml.current = next
       onChange?.(next)
     },
     onFocus: ({ editor: live }) => onReady?.(live),
@@ -151,7 +152,7 @@ export function SectionEditor({
     // Only on outside changes; writing while focused would move the caret.
     if (editor && !editor.isFocused && editor.getHTML() !== html) {
       editor.commands.setContent(html, { emitUpdate: false })
-      pristine.current = editor.getHTML()
+      lastHtml.current = editor.getHTML()
     }
   }, [editor, html])
 

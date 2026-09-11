@@ -910,7 +910,7 @@ export function DocumentEditor({
   }
 
   const rename = (section: ReportSection, heading: string) => {
-    if (!heading || heading === section.heading) return
+    if (!heading || heading === (renamedRef.current[section.id] ?? section.heading)) return
     const next = { ...renamedRef.current, [section.id]: heading }
     renamedRef.current = next
     setRenamed(next)
@@ -918,7 +918,7 @@ export function DocumentEditor({
   }
 
   const retitle = (next: string) => {
-    if (!next || next === report.title) return
+    if (!next || next === (editedTitle ?? report.title)) return
     setTitle(next)
     onDirty?.(compose(edits, renamed), next)
   }
@@ -1134,7 +1134,7 @@ export function DocumentEditor({
                 <div className="cover">
                   <EditableLine
                     as="h1"
-                    value={report.title}
+                    value={editedTitle ?? report.title}
                     editable={editable}
                     onChange={retitle}
                   />
@@ -1142,7 +1142,7 @@ export function DocumentEditor({
                 {report.sections.map((section) => (
                   <section key={section.id} ref={(node) => { sectionNodes.current[section.id] = node }}>
                     <EditableLine
-                      value={section.heading}
+                      value={renamed[section.id] ?? section.heading}
                       editable={editable}
                       onChange={(heading) => rename(section, heading)}
                     />
