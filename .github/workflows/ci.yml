@@ -68,6 +68,9 @@ jobs:
       - name: Test report edit restoration
         run: npx playwright test --config playwright.report-table.config.ts --workers=1
 
+      - name: Test session metadata hydration
+        run: npx playwright test --config playwright.session-hydration.config.ts --workers=1
+
   api:
     name: API · lint, tests
     runs-on: ubuntu-latest

@@ -1009,7 +1009,7 @@ export function Composer({
     }
     // A document request typed into chat starts a new conversation on the
     // report or slides surface; agent chats and starting points keep it here.
-    const handoff = kind === 'chat' && !sessionAgent && !sentStartingTemplate ? handoffSurface(text) : null
+    const handoff = kind === 'chat' && !session?.agentId && !sentStartingTemplate ? handoffSurface(text) : null
     if (handoff) {
       let landedHandoffSessionId = sessionId
       void send(null, handoff, text, {

@@ -1,5 +1,5 @@
-import { Bot, Boxes, Info, Palette, PanelRight } from 'lucide-react'
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { Bot, Boxes, Info, Palette, PanelRight, RotateCw } from 'lucide-react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ArtifactPanel } from '@/components/artifacts/ArtifactPanel'
@@ -10,7 +10,7 @@ import { ShareButton } from '@/components/share/ShareButton'
 import { DesignGallery } from '@/components/chat/DesignGallery'
 import { TopBar } from '@/components/layout/TopBar'
 import { JobCard } from '@/components/media/JobCard'
-import { Badge, Button } from '@/components/ui'
+import { Badge, Button, LoadingState } from '@/components/ui'
 import { kindMeta } from '@/lib/kinds'
 import { useStore } from '@/store/useStore'
 import type { Agent, SessionKind } from '@/types'
@@ -267,9 +267,21 @@ export function SessionPage() {
 
   // The session list carries no transcript; a session opened by URL fetches its own.
   const loaded = session !== null && session.messages.length > 0
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [failedLoad, setFailedLoad] = useState<{ id: string; attempt: number } | null>(null)
   useEffect(() => {
-    if (sessionId && !loaded) void openSession(sessionId)
-  }, [sessionId, loaded, openSession])
+    let current = true
+    if (sessionId && !loaded) {
+      const completed = () => {
+        // openSession retains its shared, non-throwing contract; absence is not a new chat.
+        if (current && !useStore.getState().sessions.some((row) => row.id === sessionId)) {
+          setFailedLoad({ id: sessionId, attempt: loadAttempt })
+        }
+      }
+      void openSession(sessionId).then(completed, completed)
+    }
+    return () => { current = false }
+  }, [sessionId, loaded, openSession, loadAttempt])
 
   // Messages and jobs share one timeline, ordered by creation.
   const timeline = useMemo(() => {
@@ -329,6 +341,26 @@ export function SessionPage() {
     (a) => a.id === (requestedArtifactId ?? session?.artifactId),
   )
   const Icon = meta.icon
+
+  if (!session) {
+    const failed = failedLoad?.id === sessionId && failedLoad?.attempt === loadAttempt
+    return (
+      <>
+        <TopBar left={<span className="text-base font-medium">{t('작업')}</span>} />
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          {failed ? (
+            <div role="alert" className="flex max-w-sm flex-col items-center gap-3 text-center">
+              <p className="text-base text-muted">{t('최신 내용을 불러오지 못했습니다.')}</p>
+              <Button onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+                <RotateCw size={14} />
+                {t('다시 시도')}
+              </Button>
+            </div>
+          ) : <LoadingState />}
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
