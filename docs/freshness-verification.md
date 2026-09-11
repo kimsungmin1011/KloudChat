@@ -148,6 +148,26 @@ or factual-accuracy claim follows from these policy checks. The temporary DB,
 network, files and ports were cleaned and the original data and stopped DB state
 were preserved. Existing comparison UI error handling is unchanged.
 
+### Contraction quote openers
+
+The source `12fccd0400ded2abfdd2092be2067da01ce4fcb0` fixes an incorrect hold
+for `Don't search. Translate 'Who is the current president of Korea?' into Korean.`
+The apostrophe in the preceding contraction was mistaken for a quote opener.
+Only ASCII apostrophes between ASCII letters are excluded as opening delimiters;
+closing-quote behavior, all five delimiter pairs, full-input scanning and search
+refusal remain unchanged. Later real questions and negated translations stay guarded.
+
+Replaying the immutable `5b57b3d` quote function in the new 14-case suite reproduces
+three failures. The candidate passes all 14 cases, including the mocked public
+request path, preserved model and user text, mixed requests and a long-input control.
+Its standalone offline API suite passes 2,796 tests with one existing skip; Ruff
+also passes. These counts are not added to earlier or integration suites.
+
+This follow-up makes no new provider or translation-quality claim. The actual
+comparison-policy replay above remains evidence for `ba8e673`, not for this parser
+change. Contractions inside an already-open single-quoted source retain the prior
+conservative closing ambiguity and are not claimed to be solved by this patch.
+
 Live evidence belongs to its recorded immutable source SHA. The original four-request
 comparison and the later four-turn follow-up run are separate. The subsequent quote
 parser change has deterministic regressions, not a new provider execution.
