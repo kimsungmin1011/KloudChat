@@ -127,6 +127,52 @@ normal model-answer control, mobile geometry and retained privacy badges. Web
 build/lint and four configuration tests passed. Existing CSS selector warnings
 are addressed independently by PR #186, not silently included in this PR.
 
+## Notation and explicit refusal follow-up
+
+Source `b18e39bf5213f4f1150219424c4c9b4ef47ed2b6` adds 57 regression
+cases and closes three request interpretation boundaries without adding tools or
+changing model permissions:
+
+- NFKC previously copied `2² + 3²` as `22 + 32` and `10⁻² + 1` as
+  `10-2 + 1`. Non-positional numeric notation now bypasses direct literal copying.
+  The original request reaches the existing model-directed calculator path;
+  supported fullwidth positional digits and multiplication/division/minus symbols
+  retain their existing conversions. The server does not translate powers into
+  an invented expression.
+- Explicit Korean negative operations and the supported English negative
+  arithmetic verbs no longer force an unnecessary tool requirement or a 409 on
+  a tool-free model. An explicit replacement or separate later calculation still
+  uses the existing arithmetic gate.
+- Word apostrophes no longer join separate `Don't` instructions into a quoted
+  span that erases their refusals. A linear quote masker retains Korean suffixes,
+  true quoted commands, newline boundaries and the complete request suffix.
+
+Top-level `send_message` tests fail before the corresponding fixes, including
+the wrong copied expression and unnecessary 409. Final offline API: **2,840
+passed, 1 skipped**, 11 existing warnings, 82 socket attempts blocked and zero
+external HTTP attempts. Ruff and diff checks passed. The unchanged Web source
+retains the previously recorded browser results; they are not a new browser run.
+The quote comparison covers 4,096 combinations within one differential test,
+not 4,096 extra API test cases.
+
+| Actual Qwen request | Verified successful calculator expression | Final response |
+| --- | --- | --- |
+| `2² + 3²` | `2*2 + 3*3` | `13` |
+| `10⁻² + 1` | `1/100 + 1` | `1.01` |
+| Fullwidth `１２ ÷ ３` | `12 / 3` | `4` |
+| Repeat `5` and `9` without addition | No calculator call | `5 9` |
+
+The four synthetic manual-route requests completed with eight completion
+requests, five calculator dispatches (three successful and two initial failures),
+zero reported credits and zero artifacts. Both superscript cases first produced
+an invalid calculator call, then recovered within the existing tool loop. The
+sanitized evidence does not retain those failed expressions, so their exact
+syntax is not inferred. Successful expressions, final answers, original data and
+stopped-state preservation, frozen source and complete temporary cleanup were
+checked separately. This was not a paired live baseline experiment or proof that
+all Unicode math is handled. Mixed fractions and some other unsupported notation
+remain outside the pre-existing required-calculation predicate.
+
 ## Remaining limits
 
 A calculator proves arithmetic on its supplied expression. It does not prove that

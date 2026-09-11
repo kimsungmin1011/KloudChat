@@ -16,7 +16,8 @@ _MAX_REQUEST_CHARS = 16_384
 _MAX_EXPRESSION_CHARS = 1_024
 _NUMBER = re.compile(r"(?<![\w.])[+-]?(?:\d+(?:\.\d+)?|\.\d+)", re.ASCII)
 _FENCE = re.compile(r"```[\s\S]*?(?:```|\Z)")
-_QUOTE = re.compile(r""""[^"\n]*"|'[^'\n]*'|“[^”\n]*”|‘[^’\n]*’""")
+_QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’"}
+_QUOTE_ENDS = frozenset(_QUOTE_PAIRS.values())
 _CLAUSE = re.compile(
     r"\n|[;!?]+|\.(?!\d)|\b(?:then|also|and)\b|그리고|또한|그다음|(?<=[고며]),?\s+",
     re.IGNORECASE,
@@ -34,7 +35,7 @@ _BUILD = re.compile(r"만들|작성|구현|개발|\b(?:write|build|create|genera
 _CODE = re.compile(r"\b(?:function\s+\w+\s*\(|def\s+\w+\s*\(|return\s+)", re.I)
 _DECLINE = re.compile(
     r"(?:계산|검산)(?:을)?\s*하지\s*(?:마|말)|"
-    r"\b(?:do\s+not|don't|never)\s+(?:calculate|compute|evaluate)\b",
+    r"\b(?:do\s+not|don['’]t|never)\s+(?:calculate|compute|evaluate|add|subtract|multiply|divide)\b",
     re.IGNORECASE,
 )
 _MISSING = re.compile(
@@ -47,15 +48,20 @@ _MISSING = re.compile(
 _CALCULATE = re.compile(r"계산|검산|산출|\b(?:calculate|compute|evaluate)\b", re.IGNORECASE)
 _OPERAND = r"(?<![0-9A-Za-z_.])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?![\d.])"
 _QUANTITY = rf"{_OPERAND}\s*(?:원|점|명|개)?"
+_ARITHMETIC_VERB = r"(?:더해|더하|빼\s*줘|빼면|곱하|곱해|곱하면|나누|나눠)"
 _ARITHMETIC_ACTION = re.compile(
     rf"{_QUANTITY}\s*(?:와|과|에|에서|을|를)\s*{_QUANTITY}\s*(?:을|를|으로|로)?\s*"
-    r"(?:더해|더하|빼\s*줘|빼면|곱하|곱해|곱하면|나누|나눠)|"
+    rf"{_ARITHMETIC_VERB}|"
     rf"\badd\s+(?:the\s+numbers?\s+)?{_OPERAND}"
     rf"(?:\s+(?:and|to|plus)\s+|\s*,\s*|\s+){_OPERAND}|"
     rf"\bsubtract\s+{_OPERAND}\s+from\s+{_OPERAND}|"
     rf"\b(?:multiply|divide)\s+{_OPERAND}\s+by\s+{_OPERAND}|"
     rf"{_OPERAND}\s+times\s+{_OPERAND}",
     re.IGNORECASE,
+)
+_NEGATED_ARITHMETIC = re.compile(r"^\s*(?:주)?지(?:는|도)?\s*(?:마|말|않)")
+_REPLACEMENT_ARITHMETIC = re.compile(
+    rf"^\s*(?:주)?지(?:는|도)?\s*(?:말고|않고)\s*(?:대신\s*)?{_ARITHMETIC_VERB}"
 )
 _EDITING_PREFIX = re.compile(r"(?:문단|예시|항목|제목|섹션|그룹|문서)\s*$")
 _EDITING_SUFFIX = re.compile(r"^\s*(?:examples?|sections?|paragraphs?|items?|groups?)\b", re.I)
@@ -104,14 +110,57 @@ _DIRECT_NO_FILE = re.compile(
 )
 
 
+def _mask_quoted_intent(text: str) -> str:
+    # Cache each opener's first closing quote in one reverse pass. Apostrophes
+    # inside English words are not delimiters; Korean suffixes can follow quotes.
+    ends: list[int | None] = [None] * len(text)
+    next_closing: dict[str, int] = {}
+    for index in range(len(text) - 1, -1, -1):
+        character = text[index]
+        if character == "\n":
+            next_closing.clear()
+            continue
+        before = text[index - 1] if index else ""
+        after = text[index + 1] if index + 1 < len(text) else ""
+        latin_before = before.isascii() and before.isalpha()
+        latin_after = after.isascii() and after.isalpha()
+        closing = _QUOTE_PAIRS.get(character)
+        if closing is not None and not (character == "'" and latin_before):
+            ends[index] = next_closing.get(closing)
+        if character in _QUOTE_ENDS and not (
+            character in {"'", "’"} and latin_before and latin_after
+        ):
+            next_closing[character] = index
+
+    intent = list(text)
+    index = 0
+    while index < len(text):
+        end = ends[index]
+        if end is None:
+            index += 1
+            continue
+        intent[index : end + 1] = " " * (end + 1 - index)
+        index = end + 1
+    return "".join(intent)
+
+
 def _has_numeric_arithmetic_action(text: str) -> bool:
     # "Add section 2" and "문단 2와 3을 더해" edit objects, not their numeric labels.
     text = " ".join(text.split())
-    return any(
-        not _EDITING_PREFIX.search(text[max(0, match.start() - 40) : match.start()])
-        and not _EDITING_SUFFIX.search(text[match.end() : match.end() + 40])
-        for match in _ARITHMETIC_ACTION.finditer(text)
-    )
+    for match in _ARITHMETIC_ACTION.finditer(text):
+        tail = text[match.end():]
+        if (
+            _EDITING_PREFIX.search(text[max(0, match.start() - 40):match.start()])
+            or _EDITING_SUFFIX.search(tail[:40])
+        ):
+            continue
+        if _NEGATED_ARITHMETIC.match(tail):
+            # The same operands may still have an explicit replacement operation.
+            replacement = _REPLACEMENT_ARITHMETIC.match(tail)
+            if replacement is None or _NEGATED_ARITHMETIC.match(tail[replacement.end():]):
+                continue
+        return True
+    return False
 
 
 def _standalone_expression(request: str) -> bool:
@@ -162,6 +211,14 @@ def direct_calculation_expression(request: str) -> str | None:
     equations with a supplied result and word problems are never rewritten here.
     """
     if not isinstance(request, str) or len(request) > _MAX_REQUEST_CHARS:
+        return None
+    # NFKC can turn powers or indices into adjacent digits (2² -> 22).
+    # Leave these notations to the model; only positional digits are copied.
+    if any(
+        unicodedata.category(character) == "No"
+        or unicodedata.decomposition(character).startswith(("<super>", "<sub>"))
+        for character in request
+    ):
         return None
     text = unicodedata.normalize("NFKC", request).strip()
     text = text.replace("×", "*").replace("÷", "/").replace("−", "-")
@@ -233,7 +290,7 @@ def requires_calculation(request: str) -> bool:
         return True
 
     # Quotes can supply numbers, but their embedded commands cannot establish intent.
-    intent = _QUOTE.sub(lambda match: " " * len(match.group()), text)
+    intent = _mask_quoted_intent(text)
     clauses: list[tuple[str, str, str]] = []
     start = 0
     previous_delimiter = ""
