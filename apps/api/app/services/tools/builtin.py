@@ -1372,6 +1372,7 @@ def knowledge_tool(documents: list[tuple[str, str, str | None]], collection: str
                     "없습니다. 자료에 없는 내용을 지어내지 말고, 자료에 없다고 답하세요."
                 ),
                 detail="해당 없음",
+                empty=True,
             )
         body = knowledge.render(passages)
         detail = f"{len(passages)}개 대목" if ranked else f"자료 {len(passages)}건 전문"

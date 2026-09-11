@@ -562,7 +562,7 @@ async def run_turn(
     #: half the time under a long system prompt — so a search the toggle
     #: demands goes through `preset_call` instead.
     force_tool: str | None = None,
-    #: Required, exclusive gate until it succeeds; all tool-hop prose stays private.
+    #: Required gate; only eligible arithmetic reads may precede it. Hop prose stays private.
     preflight_tool: str | None = None,
     #: A non-arithmetic NCS decision must not unlock a required numeric answer.
     calculation_required: bool = False,
@@ -639,6 +639,23 @@ async def run_turn(
     hop = 0
     preflight_completed = False
     preflight_repaired = False
+    calculation_started = False
+    read_prerequisites: set[str] = set()
+    if (
+        calculation_required and preflight_tool == "calculate"
+        and calculation_expression is None and preset_call is None
+    ):
+        # Reuse the caller's configured read contract, never infer effects from a name.
+        # The existing metadata is not a proof of a connector's actual behavior.
+        read_prerequisites = {
+            tool.name for tool in tools
+            if tool.read_only is True
+            and tool.name not in {
+                "calculate", "check_ncs_answer", "execute_code",
+                "create_artifact", "create_chart", "share_note",
+            }
+            and (not ctx.allowed or tool.name in ctx.allowed)
+        }
     post_preflight_force_sent = False
     preset_calls = []
     if preset_call and (not preflight_tool or calculation_required):
@@ -689,14 +706,16 @@ async def run_turn(
         }
         hop_tools = [] if closing else tools
         hop_definitions = [] if closing else tool_definitions
+        pending_reads = read_prerequisites if not calculation_started else set()
         if preflight_tool and not preflight_completed and not closing:
-            # An exclusive gate should not ask a small model to choose among
-            # unrelated schemas. Keep the caller's snapshots untouched.
-            hop_tools = [by_name[preflight_tool]]
+            # Reads may supply missing operands; neither a read nor its prose
+            # satisfies verification. Other tools remain unavailable until it succeeds.
+            gate_names = {preflight_tool, *pending_reads}
+            hop_tools = [tool for tool in tools if tool.name in gate_names]
             if hop_definitions is not None:
                 hop_definitions = [
                     definition for definition in hop_definitions
-                    if definition.get("function", {}).get("name") == preflight_tool
+                    if definition.get("function", {}).get("name") in gate_names
                 ]
         if disable_fallbacks:
             stream_kwargs["disable_fallbacks"] = True
@@ -705,7 +724,7 @@ async def run_turn(
             stream_kwargs["tool_definitions"] = hop_definitions
         if temperature is not None:
             stream_kwargs["temperature"] = temperature
-        if preflight_tool and not preflight_completed and not closing:
+        if preflight_tool and not preflight_completed and not closing and not pending_reads:
             stream_kwargs["force_tool"] = preflight_tool
         elif force_tool and not preflight_tool and hop == 0:
             stream_kwargs["force_tool"] = force_tool
@@ -757,15 +776,23 @@ async def run_turn(
                 "actualModel": acc.actual_model,
             }
 
+        prerequisite_batch = False
         if preflight_tool:
-            # No other call may run beside the required gate. Waiting for the
-            # complete hop also keeps ignored tool_choice and runaway drafts private.
+            # Operands cannot come from an unread result in the same parallel batch.
+            # Complete-hop validation also keeps drafts and disallowed calls private.
             gate_calls = list(acc.calls.values())
             valid_gate_calls = bool(gate_calls) and all(
                 call["name"] == preflight_tool for call in gate_calls
             )
             if not (calculation_required and preflight_tool == "calculate"):
                 valid_gate_calls = valid_gate_calls and len(gate_calls) == 1
+            if not preflight_completed and valid_gate_calls:
+                calculation_started = True
+            prerequisite_batch = bool(
+                not preflight_completed and not closing and gate_calls
+                and all(call["name"] in pending_reads for call in gate_calls)
+            )
+            valid_gate_calls = valid_gate_calls or prerequisite_batch
             missed_preflight = (
                 not preflight_completed and not running_preset and not valid_gate_calls
             )
@@ -779,6 +806,11 @@ async def run_turn(
                 conversation.append({
                     "role": "user",
                     "content": (
+                        "아직 검산을 완료하지 못했습니다. 필요한 값이 자료에 있으면 "
+                        "허용된 읽기 도구를 먼저 호출하고, 그 결과를 받은 다음 calculate로 "
+                        "계산하세요. 읽기와 계산을 동시에 호출하거나 없는 값을 만들지 마세요. "
+                        "검산 전 정답을 문장으로 반환하지 마세요."
+                        if pending_reads else
                         f"아직 {preflight_tool} 도구 호출을 받지 못했습니다. "
                         "정답을 문장이나 JSON 본문으로 쓰지 말고, 제공된 함수 스키마에 맞춰 "
                         f"{preflight_tool} 도구 호출만 반환하세요. "
@@ -993,6 +1025,16 @@ async def run_turn(
         arithmetic_results: list[bool] = []
 
         for (index, call, tool), result in zip(planned, results, strict=True):
+            if prerequisite_batch:
+                if result.failed or result.empty or not result.content.strip():
+                    result.failed = True
+                    result.final_text = (
+                        "계산에 앞서 필요한 자료를 확인하지 못해 답을 확정할 수 없습니다. "
+                        "확인할 수 있는 수치와 조건을 제공해 주세요."
+                    )
+                else:
+                    # A read can supply operands, but cannot terminate a numeric answer.
+                    result.final_text = None
             result_origin = _literal_zero_division_answer(
                 tool, result,
                 literal_preset=running_preset and calculation_expression is not None,

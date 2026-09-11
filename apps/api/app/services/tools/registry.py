@@ -53,7 +53,7 @@ def _make_runner(connector: Connector, tool_name: str, env: dict[str, str]):
         except mcp.McpError as exc:
             return ToolResult(content=f"오류: {exc}", failed=True)
         if not text:
-            return ToolResult(content="(빈 응답)", detail="결과 없음")
+            return ToolResult(content="(빈 응답)", detail="결과 없음", empty=True)
         # Caps what a server can push into the context.
         capped = text[:30_000]
         detail = f"{len(text):,}자" + (" (일부)" if len(text) > 30_000 else "")
