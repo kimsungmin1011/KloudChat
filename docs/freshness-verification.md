@@ -175,3 +175,28 @@ parser change has deterministic regressions, not a new provider execution.
 Other domains, arbitrary paraphrases, attachment-only questions, semantic source
 validation and all forms of hallucination remain outside this bounded policy.
 Providing a document does not automatically certify its current factual accuracy.
+
+### Comma-separated declined topics
+
+An independent fixed set of 24 natural prompts found one in-scope omission:
+`대통령 이름은 말하지 말고, 현재 국무총리가 누구인지 알려줘.` The
+declined first fact hid the affirmative current question in the same clause.
+Twenty-three inputs were in scope; the other input was an unsupported implicit
+follow-up. The pure function and mocked request path both failed for the same
+input, not two distinct defects.
+
+Source `619c0e26df94e7919e0c03ed7c9467c6d352d17a` recognizes ASCII/fullwidth
+commas after the Korean connective only before the existing explicit topic
+prefixes. The new branch preserves that connective so the existing declined-topic
+rules can still recognize a switch to an unrelated task. An initial candidate
+that consumed it incorrectly held a Python topic switch and was rejected.
+Existing whitespace splitting and negation rules are unchanged.
+
+The 22 added regressions reproduce 12 failures and 10 passes before the fix,
+then all pass. They cover spacing/comma variants, current questions, roles,
+historical questions, translations, topic switches and four mocked API paths
+that hold before quota, key or model work. The full freshness suite has 381
+passes; the original 24-input audit now matches its declared expectations in
+31 test executions. Offline API: 2,818 passed, one existing skip; Ruff passes.
+No actual model or database was used for this follow-up. These results neither
+measure general hallucination rates nor certify arbitrary natural paraphrases.
