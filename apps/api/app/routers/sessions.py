@@ -2873,8 +2873,8 @@ async def send_message(
             started_from=workspace.started_from,
         )
     db.add(user_message)
-    # Turn overrides are not written back; an Auto session's model is its ceiling.
-    if session.routing_mode not in _AUTO_MODES or payload.model is None:
+    # Request models are turn-only; lasting choices use the session settings API.
+    if payload.model is None:
         # A substitute is for this turn only.
         if revoked_model is None:
             session.model = requested_model["id"]
