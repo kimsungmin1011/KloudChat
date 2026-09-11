@@ -214,8 +214,8 @@ def _grid(markup: str) -> Grid:
             for open_tag, body in re.findall(r"<t[hd]\b([^>]*)>(.*?)</t[hd]\s*>", row, re.S | re.I)
         ]
         grid.rows.append(cells)
-    while grid.rows and not any(c.text for c in grid.rows[-1]):
-        grid.rows.pop()
+    # An empty anchor row can be covered by a rowspan that starts above it.
+    # Keep the writer's row positions, including ordinary empty rows.
     return grid
 
 
@@ -238,8 +238,7 @@ def _inline(fragment: str) -> str:
 def _table(markup: str) -> str:
     """A table as a GFM table, or `''` when it has no rows. Cell line breaks become `<br>`."""
     rows = _grid(markup).flat(newline="<br>")
-    rows = [row for row in rows if any(cell for cell in row)]
-    if not rows:
+    if not any(cell for row in rows for cell in row):
         return ""
     width = max(len(row) for row in rows)
     padded = [row + [""] * (width - len(row)) for row in rows]
