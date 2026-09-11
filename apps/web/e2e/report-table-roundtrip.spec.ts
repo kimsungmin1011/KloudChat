@@ -89,6 +89,12 @@ async function captureReport(testInfo: TestInfo, name: string, data: unknown) {
   await testInfo.attach(name, { path, contentType: 'application/json' })
 }
 
+async function captureScreenshot(page: Page, testInfo: TestInfo, name: string) {
+  const path = testInfo.outputPath(name)
+  await page.screenshot({ path })
+  await testInfo.attach(name, { path, contentType: 'image/png' })
+}
+
 for (const width of [1440, 390]) {
   test(`restoring the original header row saves the visible table at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 })
@@ -107,7 +113,7 @@ for (const width of [1440, 390]) {
     await enterEditor(page)
     await expect(page.locator('.ProseMirror').first().locator('th')).toHaveCount(3)
     await page.locator('.ProseMirror').first().locator('th').first().click()
-    await testInfo.attach(`restored-header-${width}.png`, { body: await page.screenshot(), contentType: 'image/png' })
+    await captureScreenshot(page, testInfo, `restored-header-${width}.png`)
     expect(state.writes).toHaveLength(1)
     expect(state.unexpected).toEqual([])
   })
@@ -172,7 +178,7 @@ for (const width of [1440, 390]) {
     await expect(merged).toHaveCount(1)
     await expect(merged.locator('p')).toHaveText(['Alpha', '10', 'Beta', '20'])
     await merged.click()
-    await testInfo.attach(`merged-${width}.png`, { body: await page.screenshot(), contentType: 'image/png' })
+    await captureScreenshot(page, testInfo, `merged-${width}.png`)
     await page.getByRole('button', { name: '셀 나누기', exact: true }).click()
     await expect(merged).toHaveCount(0)
     await expect(editor.locator('td')).toHaveCount(6)
@@ -187,7 +193,7 @@ for (const width of [1440, 390]) {
     await expect(rows.nth(1).locator('td').nth(2)).toHaveText('A')
     await expect(rows.nth(2).locator('td').nth(2)).toHaveText('B')
     await rows.nth(1).locator('td').first().click()
-    await testInfo.attach(`split-${width}.png`, { body: await page.screenshot(), contentType: 'image/png' })
+    await captureScreenshot(page, testInfo, `split-${width}.png`)
     expect(state.writes).toHaveLength(2)
     expect(state.unexpected).toEqual([])
   })
