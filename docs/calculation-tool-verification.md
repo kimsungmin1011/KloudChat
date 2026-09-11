@@ -181,6 +181,51 @@ checked separately. This was not a paired live baseline experiment or proof that
 all Unicode math is handled. Mixed fractions and some other unsupported notation
 remain outside the pre-existing required-calculation predicate.
 
+## Previous-result calculation follow-up
+
+Source `9fcb7c727e64d978ec122081772334e9b753b69b` extends the existing
+gate to one explicit operation on a completed previous numeric result. It does
+not copy a prior answer into a server-invented equation: the unchanged,
+privacy-processed conversation reaches the model, which supplies the next
+expression to an already-permitted calculator. Eight-pair history bounds,
+negative intent, retry trimming and missing-tool refusal have regressions.
+
+Before the change, the real `send_message` routing regression had **18 failed,
+18 passed** on the prior source. The final independent read-only verification
+ran **421 calculation tests passed**, with zero socket/HTTP attempts, and
+**2,947 API tests passed, 1 skipped**, with 11 existing warnings, 82 socket
+attempts blocked and zero HTTP attempts. Ruff passed. These are offline results
+for the recorded source, not additional live-model test cases or new Web runs.
+
+An isolated actual-model replay used the same four-turn synthetic conversation
+on baseline `43d94a1c05412e4f2f5af6afbf974ae4d268c9b5` and the candidate,
+selecting `strict-local/qwen3.6-35b` in manual mode:
+
+| Turn | Baseline | Candidate |
+| --- | --- | --- |
+| `25 * 16` | Correct 400; one calculation | Correct 400; `25 * 16` verified |
+| Add 25 to that result | Correct 425; calculator skipped | Correct 425; `400 + 25` verified |
+| Take 20% of that total | Correct 85; calculator skipped | Correct 85; `425 * 0.2` verified |
+| Switch to describing Python lists | Relevant answer; no calculation | Relevant answer; no calculation |
+
+The baseline already had three correct numeric answers. The observed improvement
+was **calculator executions 1 to 3 and missed follow-up calculations 2 to 0**, not
+numeric accuracy. Completion requests increased **4 to 8**. On both candidate
+follow-ups Qwen first ignored the required tool choice; the existing one-reminder
+repair then elicited a successful calculation. This is not first-attempt tool
+compliance. The final percentage answer correctly stated that 20% of 425 is 85,
+but omitted the explicitly requested multiplication equation, a remaining format
+defect despite successful tool use.
+
+All four candidate SSE answers matched the stored text. Both runs reported zero
+app credits and zero artifacts. Candidate receipt, original report and assessment
+were independently checked: source stayed frozen and clean, temporary database,
+network and files were removed, API process exited and ports closed, and original
+read-only data and stopped database state were preserved. The harness explicitly
+stubbed title generation and disabled memory; its HTTPX transport allowlist is
+not an OS firewall or physical-locality attestation. One fixed chain does not
+establish general accuracy, prior-answer truth, or model-only causal improvement.
+
 ## Remaining limits
 
 A calculator proves arithmetic on its supplied expression. It does not prove that
