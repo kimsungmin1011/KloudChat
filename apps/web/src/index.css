@@ -31,7 +31,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 /* A phone: a touch screen up to 1024px wide (foldables and landscape included), or any
    viewport under 640px. Width alone missed wide phones. */
-@custom-variant phone (@media (pointer: coarse) and (max-width: 64rem), (max-width: 40rem));
+@custom-variant phone {
+  @media (pointer: coarse) and (max-width: 64rem), (max-width: 40rem) {
+    @slot;
+  }
+}
 
 /* Surfaces: --bg page, --panel card, --elevated raised/hovered card, --sidebar nav column.
    Text tokens must keep WCAG AA (4.5:1) against all four surfaces in both themes. */
