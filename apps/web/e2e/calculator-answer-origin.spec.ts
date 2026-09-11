@@ -202,12 +202,49 @@ test('텍스트 스트리밍을 꺼도 출처 이벤트를 처리하고 답변 �
 const calculationHold = '계산기의 검산을 완료하지 못해 수치 답변을 확정할 수 없습니다. 필요한 값과 계산 조건을 확인해 주세요.'
 const ncsHold = '문항 검산 절차를 완료하지 못해 정답이나 채점을 확정할 수 없습니다. 다시 시도해 주세요.'
 
+function developmentHmrSocket(baseURL: string, contentType: string, client: string): string | null {
+  const origin = new URL(baseURL)
+  if (origin.hostname !== '127.0.0.1' || !contentType.includes('javascript') || !client.includes('"vite-hmr"')) return null
+  const token = client.match(/^const wsToken = ("[^"\n]+");$/m)
+  if (!token) return null
+  const target = new URL('/', origin)
+  target.protocol = origin.protocol === 'https:' ? 'wss:' : 'ws:'
+  target.searchParams.set('token', JSON.parse(token[1]) as string)
+  return target.href
+}
+
+function isDevelopmentHmrSocket(candidate: string, expected: string | null): boolean {
+  return expected !== null && candidate === expected
+}
+
+test('개발 HMR은 현재 서버의 정확한 경로와 토큰만 예외로 둔다', () => {
+  const expected = developmentHmrSocket('http://127.0.0.1:5198', 'text/javascript', '"vite-hmr"\nconst wsToken = "synthetic-token";')
+  expect(isDevelopmentHmrSocket('ws://127.0.0.1:5198/?token=synthetic-token', expected)).toBe(true)
+  for (const target of [
+    'ws://127.0.0.1:5199/?token=synthetic-token',
+    'ws://127.0.0.1:5198/api/events?token=synthetic-token',
+    'ws://127.0.0.1:5198/?token=other',
+    'wss://example.test/?token=synthetic-token',
+  ]) expect(isDevelopmentHmrSocket(target, expected)).toBe(false)
+})
+
+test('production HTML 응답은 HMR 예외를 만들지 않는다', () => {
+  const expected = developmentHmrSocket('http://127.0.0.1:5198', 'text/html', '<html>production bundle</html>')
+  expect(expected).toBeNull()
+  expect(isDevelopmentHmrSocket('ws://127.0.0.1:5198/?token=synthetic-token', expected)).toBe(false)
+})
+
+test('확인되지 않은 개발 클라이언트는 HMR 예외를 만들지 않는다', () => {
+  expect(developmentHmrSocket('http://127.0.0.1:5198', 'text/javascript', 'const wsToken = "synthetic-token";')).toBeNull()
+  expect(developmentHmrSocket('http://127.0.0.1:5198', 'text/javascript', '"vite-hmr"')).toBeNull()
+})
+
 for (const viewport of [
   { name: 'desktop', width: 1440, height: 900 },
   { name: 'mobile', width: 390, height: 844 },
 ]) {
   for (const context of ['calculation', 'ncs'] as const) {
-    test(`${viewport.name} ${context}: 검산 보류 문구를 스트림과 재조회에서 그대로 표시한다`, async ({ page }) => {
+    test(`${viewport.name} ${context}: 검산 보류 문구를 스트림과 재조회에서 그대로 표시한다`, async ({ page, baseURL }) => {
       await page.setViewportSize(viewport)
       const isCalculation = context === 'calculation'
       const fixture = {
@@ -216,7 +253,14 @@ for (const viewport of [
         step: isCalculation ? '계산 확인' : '문항 검산',
       }
       const state = await mockAnswer(page, false, true, true, fixture)
+      const client = await page.request.get(new URL('/@vite/client', baseURL).href)
+      const hmrSocket = developmentHmrSocket(baseURL!, client.headers()['content-type'] ?? '', await client.text())
       await page.context().routeWebSocket('**/*', (socket) => {
+        // The real dev client supplies this exact ephemeral endpoint; production has none.
+        if (isDevelopmentHmrSocket(socket.url(), hmrSocket)) {
+          socket.connectToServer()
+          return
+        }
         state.unexpected.push('WebSocket')
         socket.close()
       })

@@ -28,7 +28,7 @@ mixed-batch rejection, exhausted-hop/loop/runaway holds, unchanged NCS wording,
 and ordinary successful arithmetic. No API server or model call was used for
 this follow-up verification.
 
-## Production Browser Verification
+## Initial Production Browser Verification
 
 The existing calculation Playwright suite now contains 16 cases: its prior 12
 plus four ordinary/NCS hold cases at 1440x900 and 390x844. All 16 passed without
@@ -46,6 +46,35 @@ entrypoint, with HTTP 200 for both index and bundle. Its API proxy used a dead
 loopback port. TypeScript/production build, web lint and four Vite configuration
 tests passed. Existing lint and bundle-size warnings remain. The owned preview
 was stopped and its port was confirmed closed.
+
+## CI Development-Server Compatibility
+
+The first public CI run on `9c89f1a` passed the original 12 cases but failed the
+four new hold cases at their unexpected-WebSocket assertion. The exact CI
+development-server command reproduced four failures and 12 passes locally.
+The text, reload and layout assertions had passed. Unlike the production
+preview above, Vite's development client opens HMR WebSockets.
+
+The actual blocked endpoints were the configured `127.0.0.1:5198` origin, root
+path, and Vite's token query. The test harness now reads only that local
+server's `/@vite/client` response and recognizes the JavaScript content type,
+HMR marker and emitted token. It connects only the resulting exact same-server
+WebSocket URL. A different port, path or token, and every external WebSocket,
+remain unexpected and blocked. Production HTML cannot create this exception,
+so the production expectation remains zero WebSocket attempts. Token values
+are kept in test memory and are not recorded as evidence.
+
+Three narrow helper controls were added. The resulting 19 cases passed both
+the exact CI development configuration (14.6 seconds) and a freshly built
+production preview (8.4 seconds), with no retries, skips or flaky results.
+The production bundle remained `index-Dyokbxgz.js`; no product UI/API code was
+changed by this CI compatibility fix. TypeScript/build, lint and diff checks
+passed; existing lint, 12 standalone phone-selector, and bundle-size warnings
+remain outside this test-only change. Both owned server ports were closed.
+
+```sh
+API_BASE_URL=http://127.0.0.1:59999 CI=true npx playwright test --config playwright.calculation.config.ts --workers=1
+```
 
 ## Evidence Limits
 
