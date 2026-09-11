@@ -1372,14 +1372,17 @@ export const useStore = create<State>((set, get) => ({
     const beforeArtifactIds = new Set(get().artifacts.map((artifact) => artifact.id))
     const beforeOpenArtifactId = get().openArtifactId
     const now = new Date().toISOString()
+    // An unresolved Agent default is not a request to override it with the surface default.
+    const agentModelPending = before?.agentId && !before.model &&
+      !get().agents.some((agent) => agent.id === before.agentId)
     const model =
       opts.model ??
-      effectiveModelId(
-        get().sessions.find((c) => c.id === id),
+      (agentModelPending ? '' : effectiveModelId(
+        before,
         kind,
         get().agents,
         get().modelByKind,
-      )
+      ))
     const userMsg: Message = {
       id: uid('m'),
       role: 'user',

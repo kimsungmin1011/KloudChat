@@ -65,10 +65,12 @@ async function fixture(page: Page, testInfo: TestInfo, kind: Kind, agent = false
       privacy: { externalDataGuard: false }, passwordResetEnabled: false, dictationEnabled: false,
     } })
     if (method === 'GET' && path === '/models') return route.fulfill({ json: {
-      models: [{ id: 'fixture/model', label: 'Fixture', name: 'Fixture', vendor: 'Fixture',
+      models: ['fixture/model', 'fixture/agent'].map((modelId) => ({
+        id: modelId, label: modelId === 'fixture/agent' ? 'Agent fixture' : 'Fixture',
+        name: modelId === 'fixture/agent' ? 'Agent fixture' : 'Fixture', vendor: 'Fixture',
         provider: 'fixture', kinds: ['chat', 'report', 'slides'], modality: 'chat',
         dataBoundary: 'external', creditCost: 1, inputCreditCost: 1, supportsTools: true,
-        contextWindow: 64000 }], defaultChatModel: 'fixture/model',
+        contextWindow: 64000 })), defaultChatModel: 'fixture/model',
       defaults: { chat: 'fixture/model', report: 'fixture/model', slides: 'fixture/model' },
       litellmAvailable: false, autoRouting: { enabled: false, available: false },
     } })
@@ -89,8 +91,8 @@ async function fixture(page: Page, testInfo: TestInfo, kind: Kind, agent = false
     if (method === 'GET' && path === '/agents') {
       await agents.promise
       return route.fulfill({ json: agent ? [{ id: 'fixture-agent', ownerId: user.id,
-        name: 'Original Agent', slug: 'original-agent', description: 'Fixture', model: 'fixture/model',
-        systemPrompt: '', tools: [], skillIds: [], kinds: ['chat'], guide: '', starters: [],
+        name: 'Original Agent', slug: 'original-agent', description: 'Fixture', model: 'fixture/agent',
+        systemPrompt: '', tools: [], skillIds: [], kinds: ['chat', 'report', 'slides'], guide: '', starters: [],
         color: '#168267', enabled: true, visibility: 'private', installs: 0, runs: 0, updatedAt: at,
       }] : [] })
     }
@@ -125,6 +127,7 @@ async function fixture(page: Page, testInfo: TestInfo, kind: Kind, agent = false
   return {
     list, detail, agents, otherDetail, seenList, seenDetail, writes, unexpected,
     setStatus: (next: number) => { status = next },
+    setSessionModel: (model: string) => { row.model = model },
     omitListing: () => { listing = [] },
     delayOther: () => { delayOther = true },
     detailCalls: () => detailCalls,
@@ -233,6 +236,42 @@ test('a ready non-Agent chat still hands an explicit document request to report'
     state.release()
   }
 })
+
+for (const kind of ['chat', 'report', 'slides'] as const) {
+  for (const selection of ['pending inheritance', 'loaded inheritance', 'explicit override'] as const) {
+    test(`${kind}: Agent model preserves ${selection}`, async ({ page }, info) => {
+      const state = await fixture(page, info, kind, true)
+      try {
+        state.setSessionModel(selection === 'explicit override' ? 'fixture/model' : '')
+        state.list.release()
+        state.detail.release()
+        if (selection === 'loaded inheritance') state.agents.release()
+        await page.goto(`/s/${id}`)
+        const composer = page.getByLabel('프롬프트 입력')
+        await expect(composer).toHaveAttribute('placeholder', placeholders[kind])
+        if (selection === 'loaded inheritance') {
+          await expect(page.getByRole('button', { name: /Agent fixture/ }).first()).toBeVisible()
+        }
+        await composer.fill(prompt)
+        await composer.press('Enter')
+        await expect.poll(() => state.writes.length).toBe(1)
+        expect(state.writes[0]).toMatchObject({ method: 'POST', path: `/sessions/${id}/messages` })
+        const payload = state.writes[0].data as { model?: string }
+        // Chat resolves the saved model server-side; document requests carry their choice.
+        if (kind === 'chat') {
+          expect(payload.model).toBeUndefined()
+        } else if (selection === 'pending inheritance') {
+          expect(payload.model).toBe('')
+        } else {
+          expect(payload.model).toBe(selection === 'loaded inheritance' ? 'fixture/agent' : 'fixture/model')
+        }
+        expect(state.unexpected).toEqual([])
+      } finally {
+        state.release()
+      }
+    })
+  }
+}
 
 for (const delayed of [false, true]) {
   test(`a late failure for A does not replace B's ${delayed ? 'pending' : 'loaded'} state`, async ({ page }, info) => {
