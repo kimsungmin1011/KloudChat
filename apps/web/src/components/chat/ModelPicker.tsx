@@ -117,6 +117,9 @@ export function ModelPicker({
     ? session?.routingMode
     : undefined
   const autoActive = autoLane === 'auto' || autoLane === 'auto_quality'
+  const unresolvedAgentModel = !autoActive &&
+    (kind === 'chat' || kind === 'report' || kind === 'slides') &&
+    Boolean(session?.agentId && !session.model && !agents.some((agent) => agent.id === session.agentId))
   // Auto belongs to a session, so it needs one or a caller that can create one.
   const canRouteAuto = kind === 'chat' && (Boolean(sessionId) || Boolean(onEnableAuto))
   const persistSelection = async (action: () => void | Promise<void>) => {
@@ -144,6 +147,7 @@ export function ModelPicker({
       </span>
     )
   }
+  const modelLabel = unresolvedAgentModel ? t('Agent 기본 모델') : active.label
 
   return (
     <Dropdown
@@ -158,7 +162,7 @@ export function ModelPicker({
           type="button"
           disabled={selectionPending}
           aria-busy={selectionPending}
-          aria-label={label ? `${label}: ${active.label}` : undefined}
+          aria-label={label ? `${label}: ${modelLabel}` : undefined}
           className={cn(
             'flex h-9 items-center gap-1.5 rounded-control text-base font-medium transition-colors',
             field
@@ -176,8 +180,8 @@ export function ModelPicker({
             {autoActive ? <Gauge size={14} /> : <Cpu size={14} />}
             <span className={cn('truncate', !field && 'max-w-[220px] phone:max-w-[38vw]')}>
               {autoActive
-                ? `${autoLane === 'auto_quality' ? t('Auto · 품질 우선') : t('Auto · 비용 절약')} · ${active.label}`
-                : active.label}
+                ? `${autoLane === 'auto_quality' ? t('Auto · 품질 우선') : t('Auto · 비용 절약')} · ${modelLabel}`
+                : modelLabel}
             </span>
           </span>
           {!compact && <ChevronDown size={14} className="shrink-0 text-faint" />}
@@ -187,6 +191,7 @@ export function ModelPicker({
       <ModelMenu
         usable={usable}
         active={active}
+        unresolvedAgentModel={unresolvedAgentModel}
         autoLane={autoLane}
         autoRouting={autoRouting}
         showAuto={canRouteAuto}
@@ -214,6 +219,7 @@ export function ModelPicker({
 function ModelMenu({
   usable,
   active,
+  unresolvedAgentModel,
   autoLane,
   autoRouting,
   showAuto,
@@ -224,6 +230,7 @@ function ModelMenu({
 }: {
   usable: ModelInfo[]
   active: ModelInfo
+  unresolvedAgentModel: boolean
   autoLane: RoutingMode | undefined
   autoRouting: ReturnType<typeof useStore.getState>['autoRouting']
   showAuto: boolean
@@ -303,7 +310,7 @@ function ModelMenu({
                 </span>
                 <span className="mt-0.5 block text-sm text-muted">{lane.blurb}</span>
                 <span className="mt-1 block truncate text-xs text-faint">
-                  {lane.mode === 'auto_quality' ? t('현재 모델') : t('품질 모델')}: {active.label}
+                  {lane.mode === 'auto_quality' ? t('현재 모델') : t('품질 모델')}: {unresolvedAgentModel ? t('Agent 기본 모델') : active.label}
                 </span>
               </span>
             </button>
@@ -363,7 +370,7 @@ function ModelMenu({
           className="flex w-full items-start gap-2.5 rounded-control px-2.5 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-55"
         >
           <span className="mt-0.5 w-4 shrink-0 text-accent">
-            {m.id === active.id && <Check size={14} />}
+            {!unresolvedAgentModel && m.id === active.id && <Check size={14} />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1.5">

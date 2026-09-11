@@ -581,6 +581,7 @@ const EN: Record<string, string> = {
   '모델 선택': 'Model',
   '고른 모델의 이름이 아래 설정에 그대로 들어갑니다.': 'The model you pick goes straight into the settings below.',
   '사용 가능한 모델 없음': 'No models available',
+  'Agent 기본 모델': 'Agent default model',
   'Anthropic 형식으로 주고받습니다.': 'Speaks the Anthropic format.',
   '이 터미널 창에서만 유효합니다. 영구 적용은 ~/.bashrc 나 ~/.zshrc 에 넣으세요.':
     'Applies to this terminal only. To keep it, add it to ~/.bashrc or ~/.zshrc.',

@@ -7,6 +7,7 @@
 - Before a session row is available, render a loading state instead of treating the unknown session as a new chat. A failed detail lookup displays the existing retry action.
 - Use the persisted `session.agentId`, not the independently loaded Agent catalogue, to decide whether a chat can hand a document request to another surface.
 - When a session inherits its Agent model and the Agent catalogue is not available yet, keep the document request model empty so the existing server-side Agent resolution can run. An explicit session/turn choice or an already loaded Agent model remains unchanged.
+- On manual chat/report/slides, unresolved Agent inheritance is displayed as `Agent 기본 모델` / `Agent default model`, not as a selected surface fallback. Choosing a concrete model remains available. Active Auto ceilings, media model selection, and model-unavailable states are unchanged.
 - The store/API contracts, ordinary chat-to-document handoff, and new-session creation are unchanged. This is a functional context-preservation fix, not evidence of an authorization or data-disclosure defect.
 
 ## Before and after
@@ -18,7 +19,7 @@ Two focused baseline browser cases failed before the product edits:
 
 The assertions record the mocked HTTP mutations, not just the placeholder text. No real session was created or deleted.
 
-The production-preview suite passes all **48 cases**, with retries disabled:
+The production-preview suite passes all **60 cases**, with retries disabled:
 
 | Boundary | Desktop | Mobile |
 | --- | ---: | ---: |
@@ -27,9 +28,12 @@ The production-preview suite passes all **48 cases**, with retries disabled:
 | Persisted Agent ID before Agent catalogue | 1 | 1 |
 | Ready non-Agent chat retains ordinary report handoff | 1 | 1 |
 | Chat/report/slides Agent model: pending inheritance, loaded inheritance, explicit session override | 9 | 9 |
+| Unresolved label becomes the loaded Agent label in Korean/English | 2 | 2 |
+| Report/slides explicit model pick while Agent loads, PATCH and reload | 2 | 2 |
+| Persisted Auto/Auto-quality ceiling while Agent loads | 2 | 2 |
 | Late failure for A after navigation to loaded/pending B | 2 | 2 |
 | New chat/report/slides creation | 3 | 3 |
-| Total | 24 | 24 |
+| Total | 30 | 30 |
 
 Held requests use explicit test-controlled promises rather than sleep-based timing. Both metadata sources can independently unlock the correctly typed composer. The navigation cases verify that a late failure for another ID cannot replace the current loading or ready state.
 
@@ -41,13 +45,22 @@ The first Agent fixture explicitly pinned its session model, which did not cover
 
 The chat controls passed because ordinary chat already omits a turn model override and lets the server resolve it. The follow-up does not claim the same request-level defect in chat. For unresolved Agent inheritance, `send()` now retains an empty request model instead of substituting a surface default. The final assertions require the exact empty value for documents and an omitted override for chat; loaded Agent defaults and explicit session overrides retain their original behavior. All 48 cases pass after the follow-up. These are request-contract checks, not live Agent model execution proof.
 
+### Unresolved model label follow-up
+
+Independent production-browser evidence on `f1686e5cf59d513bc05b5adf97da55dc0c840aeb` found that pending report/slides inheritance still displayed the surface default and marked its menu row selected, while the actual captured request sent `model: ""`. Four pending cases failed across desktop/mobile; eight explicit-session and loaded-Agent controls passed. The outside harness's initial locale setup failure was retained separately and is not counted as a product failure.
+
+The source suite then reproduced 14 failing label/selection cases with 16 passing controls before the display change. `ModelPicker` now presents the unresolved default honestly and removes the fallback selection check. Its selection callbacks, store requests, server model policy, and active Auto behavior were not changed. The menu's Auto descriptions also avoid naming an unresolved concrete model.
+
+The final full suite passes 60 cases with no retries, skips, flaky results, or runner errors. Twelve new cases cover Korean/English pending-to-loaded labels, explicit model selection during loading followed by mocked PATCH/GET reload, and both persisted Auto modes. The existing 18 inheritance cases now also assert the displayed label and absence of a false fallback check. The model-pick persistence check uses the mock session row; it is not a real database persistence claim.
+
 ## Other checks
 
 - Web build and lint pass; existing bundle-size/lint warnings remain.
 - The unchanged API suite passes: **2410 passed, 1 skipped, 11 warnings**.
 - `git diff --check` passes.
 - The existing slide presentation mock suite also passes all 18 cases on the first hydration fix's production bundle.
-- A dedicated CI step runs the 48 hydration browser cases with its own build and preview server.
+- A dedicated CI step runs the 60 hydration browser cases with its own build and preview server.
+- The display follow-up also passes all four Vite configuration tests, production build, and lint. Its 196 lint warnings are identical to the preceding source. The unchanged offline API suite passes 2,410 tests with 1 skip; the network guard refuses 82 socket attempts and records zero real HTTP transport calls.
 
 ## Separate integrated API replay
 
@@ -76,6 +89,12 @@ The config owns port `5303` and refuses to reuse an existing server. All applica
 ## Screenshots
 
 The images are from the first 30-case mock production-preview run, with synthetic account data. The model-inheritance follow-up does not change these loading/retry states.
+
+The following display-state screenshots are from the final 60-case production-preview run. Desktop Korean and mobile English were visually inspected; the default label fits and the unrelated fallback row is not marked selected.
+
+![Unresolved Agent model and unselected fallback on desktop](screenshots/session-agent-model-menu-desktop.png)
+
+![Unresolved Agent default in English on mobile](screenshots/session-agent-model-pending-en-mobile.png)
 
 ![Mobile loading state without a composer](screenshots/session-hydration-pending-mobile.png)
 

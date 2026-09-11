@@ -96,6 +96,13 @@ async function fixture(page: Page, testInfo: TestInfo, kind: Kind, agent = false
         color: '#168267', enabled: true, visibility: 'private', installs: 0, runs: 0, updatedAt: at,
       }] : [] })
     }
+    if (method === 'PATCH' && path === `/sessions/${id}`) {
+      const data = request.postDataJSON()
+      writes.push({ method, path, data })
+      if (typeof data.model === 'string') row.model = data.model
+      if (typeof data.routingMode === 'string') row.routingMode = data.routingMode
+      return route.fulfill({ json: row })
+    }
     if (method === 'POST' && path === '/sessions') {
       writes.push({ method, path, data: request.postDataJSON() })
       second = { ...row, id: otherId, kind: request.postDataJSON().kind }
@@ -128,6 +135,7 @@ async function fixture(page: Page, testInfo: TestInfo, kind: Kind, agent = false
     list, detail, agents, otherDetail, seenList, seenDetail, writes, unexpected,
     setStatus: (next: number) => { status = next },
     setSessionModel: (model: string) => { row.model = model },
+    setRoutingMode: (mode: 'auto' | 'auto_quality') => { row.routingMode = mode },
     omitListing: () => { listing = [] },
     delayOther: () => { delayOther = true },
     detailCalls: () => detailCalls,
@@ -249,8 +257,18 @@ for (const kind of ['chat', 'report', 'slides'] as const) {
         await page.goto(`/s/${id}`)
         const composer = page.getByLabel('프롬프트 입력')
         await expect(composer).toHaveAttribute('placeholder', placeholders[kind])
-        if (selection === 'loaded inheritance') {
-          await expect(page.getByRole('button', { name: /Agent fixture/ }).first()).toBeVisible()
+        const label = selection === 'pending inheritance' ? 'Agent 기본 모델'
+          : selection === 'loaded inheritance' ? 'Agent fixture' : 'Fixture'
+        const picker = page.getByRole('button', { name: label, exact: true }).first()
+        await expect(picker).toBeVisible()
+        if (selection === 'pending inheritance') {
+          await page.screenshot({ path: info.outputPath('agent-model-pending.png'), animations: 'disabled' })
+          await picker.click()
+          const fallback = page.getByRole('button', { name: /^Fixture/ }).last()
+          await expect(fallback).toBeVisible()
+          await expect(fallback.locator('svg.lucide-check')).toHaveCount(0)
+          await page.screenshot({ path: info.outputPath('agent-model-menu.png'), animations: 'disabled' })
+          await page.keyboard.press('Escape')
         }
         await composer.fill(prompt)
         await composer.press('Enter')
@@ -271,6 +289,83 @@ for (const kind of ['chat', 'report', 'slides'] as const) {
       }
     })
   }
+}
+
+for (const language of ['ko', 'en'] as const) {
+  test(`pending Agent label resolves after loading in ${language}`, async ({ page }, info) => {
+    await page.addInitScript((lang) => localStorage.setItem('kchat-lang', lang), language)
+    const state = await fixture(page, info, 'report', true)
+    try {
+      state.setSessionModel('')
+      state.list.release()
+      state.detail.release()
+      await page.goto(`/s/${id}`)
+      const label = language === 'ko' ? 'Agent 기본 모델' : 'Agent default model'
+      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
+      await page.screenshot({ path: info.outputPath(`agent-model-${language}-pending.png`), animations: 'disabled' })
+      state.agents.release()
+      await expect(page.getByRole('button', { name: 'Agent fixture', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: label, exact: true })).toHaveCount(0)
+      expect(state.writes).toEqual([])
+      expect(state.unexpected).toEqual([])
+    } finally {
+      state.release()
+    }
+  })
+}
+
+for (const kind of ['report', 'slides'] as const) {
+  test(`${kind}: a model pick while Agent loads persists through reload`, async ({ page }, info) => {
+    const state = await fixture(page, info, kind, true)
+    try {
+      state.setSessionModel('')
+      state.list.release()
+      state.detail.release()
+      await page.goto(`/s/${id}`)
+      await page.getByRole('button', { name: 'Agent 기본 모델', exact: true }).click()
+      await page.getByRole('button', { name: /^Fixture/ }).click()
+      await expect.poll(() => state.writes.length).toBe(1)
+      expect(state.writes[0]).toEqual({ method: 'PATCH', path: `/sessions/${id}`,
+        data: { model: 'fixture/model', routingMode: 'manual' } })
+      await expect(page.getByRole('button', { name: 'Fixture', exact: true })).toBeVisible()
+      await page.reload()
+      await expect(page.getByRole('button', { name: 'Fixture', exact: true })).toBeVisible()
+      const composer = page.getByLabel('프롬프트 입력')
+      await composer.fill(prompt)
+      await composer.press('Enter')
+      await expect.poll(() => state.writes.length).toBe(2)
+      expect(state.writes[1]).toMatchObject({ method: 'POST', path: `/sessions/${id}/messages`,
+        data: { model: 'fixture/model' } })
+      expect(state.unexpected).toEqual([])
+    } finally {
+      state.release()
+    }
+  })
+}
+
+for (const mode of ['auto', 'auto_quality'] as const) {
+  test(`${mode}: a saved Auto ceiling remains visible while Agent loads`, async ({ page }, info) => {
+    const state = await fixture(page, info, 'chat', true)
+    try {
+      state.setRoutingMode(mode)
+      state.list.release()
+      state.detail.release()
+      await page.goto(`/s/${id}`)
+      const label = `Auto · ${mode === 'auto' ? '비용 절약' : '품질 우선'} · Fixture`
+      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
+      state.agents.release()
+      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
+      const composer = page.getByLabel('프롬프트 입력')
+      await composer.fill('두 문장으로 설명해줘.')
+      await composer.press('Enter')
+      await expect.poll(() => state.writes.length).toBe(1)
+      expect(state.writes[0]).toMatchObject({ method: 'POST', path: `/sessions/${id}/messages` })
+      expect((state.writes[0].data as { model?: string }).model).toBeUndefined()
+      expect(state.unexpected).toEqual([])
+    } finally {
+      state.release()
+    }
+  })
 }
 
 for (const delayed of [false, true]) {
