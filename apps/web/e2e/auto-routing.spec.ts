@@ -771,13 +771,36 @@ for (const [decision, reasonCode, expected] of [
 
 for (const mode of ['auto', 'auto_quality'] as const) {
   test(`${mode} 처리 내역의 전체 모델 정보는 화면 안에 표시한다`, async ({ page }) => {
-    await mockApp(page, mode)
+    const state = await mockApp(page, mode)
+    let releaseRefresh!: () => void
+    let refreshRequested!: () => void
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve })
+    const refreshStarted = new Promise<void>((resolve) => { refreshRequested = resolve })
+    await page.route(new RegExp(`/api/sessions/${sessionId}$`), async (route) => {
+      if (route.request().method() === 'GET' && state.messageRequests.length > 0) {
+        refreshRequested()
+        await refreshGate
+      }
+      await route.fallback()
+    })
     await page.goto(`/s/${sessionId}`)
     await disableWebSearch(page)
     await page.getByLabel('프롬프트 입력').fill('요청 조건을 확인해줘')
     await page.getByLabel('프롬프트 입력').press('Enter')
-    await openRoutingDetails(page)
     const routeBadge = page.getByText(/요청 모델:.*선택 모델:.*실행 모델:/)
+    const savedQuestion = page.getByText('saved prompt', { exact: true })
+    try {
+      await refreshStarted
+      await openRoutingDetails(page)
+      await expect(routeBadge).toBeVisible()
+      // This marker comes only from the GET transcript, never the prompt or SSE.
+      await expect(savedQuestion).toHaveCount(0)
+    } finally {
+      releaseRefresh()
+    }
+    // Reconciliation replaces optimistic message IDs; measure the stored transcript.
+    await expect(savedQuestion).toBeVisible()
+    await openRoutingDetails(page)
     await expect(routeBadge).toBeVisible()
     const bounds = await routeBadge.boundingBox()
     expect(bounds).not.toBeNull()

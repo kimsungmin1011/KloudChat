@@ -50,6 +50,9 @@ jobs:
       - name: Test freshness policy feedback
         run: npx playwright test --config playwright.freshness.config.ts --workers=1
 
+      - name: Test Auto routing badge geometry
+        run: npx playwright test --config playwright.auto-badge.config.ts --workers=1
+
       - name: Test slide presentation layout
         run: npx playwright test --config playwright.presentation.config.ts --workers=1
 
