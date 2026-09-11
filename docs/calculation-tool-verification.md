@@ -74,6 +74,59 @@ The tested API was subsequently rebased onto `f537972`; the only additional API
 change from upstream was its unrelated default monthly-credit setting. Evidence
 must be associated with the recorded source SHA, not presented as a release test.
 
+## Follow-up verification
+
+The follow-up source `d84245fb83213e423e781a6e7b71c31690bb0073` also
+distinguishes a calculator-authored failure from a model-generated answer.
+Only a literal expression copied from the user, the actual built-in calculator,
+its typed division-by-zero result, and no attempted answer-model request qualify.
+Model-composed expressions and other tool failures retain the existing retry/hold
+behavior. Malformed expressions and choices are validated before the typed result.
+
+The fixed answer has `answerOrigin=tool_result`, `model=null`, zero answer usage,
+and no answer charge or title/memory/artifact enrichment. Privacy metadata and any
+earlier search ledger or Auto classifier audit are preserved. Model selection,
+headroom/key preparation, and Auto quality classification can precede the answer;
+this is not a promise of zero upstream work or zero whole-turn cost in every mode.
+
+| Actual manual-route replay | Answer origin | Answer completions |
+| --- | --- | --- |
+| `12 / 0` with a brief-answer instruction | Calculator explains division by zero; persisted model null | 0 |
+| `12 / (3 - 3)` with the same instruction | Calculator explains division by zero; persisted model null | 0 |
+| `12 / 3` normal control | Qwen answers `12 / 3 = 4` after calculator execution | 1 |
+
+This three-case run made three calculator dispatches (two expected arithmetic
+failures and one success), one completion, zero reported credits and zero artifacts.
+Stored failure answers have an empty `actualModels` list. All temporary resources
+were removed and the original read-only source data/stopped database preserved.
+The earlier `86aadbf` run failed the two provenance expectations: the literal
+extractor did not recognize the benign Korean brief-answer suffix, so it called
+the model and held generically. Four real `send_message` regressions reproduced
+that failure before the suffix fix; the same live questions were then replayed.
+
+Uncustomized ordinary chat now omits the built-in NCS checker unless the current
+or retained user request explicitly needs NCS/quiz grading. All Agent, project,
+skill, attachment and other custom contexts preserve their existing tool selection.
+The calculator is retained, the catalogue is unchanged, and no excluded permission
+is added. Missing-data prompts do not receive invented equations or forced tools.
+
+A separate paired five-question run compared `b930a520` and `56db6ca8`: three
+missing-data requests, one explicit NCS control and one literal multiplication.
+Both versions gave correct core limitations/calculations; each made six completion
+requests and two successful calculations with zero reported credits/artifacts.
+The baseline exposed checker protocol in two responses (three fully satisfactory
+answers); the candidate removed that protocol but one response was unnecessarily
+long and added unverified conditional examples (four fully satisfactory answers).
+Those examples were numerically correct, but are a remaining quality limitation.
+One stochastic observation per prompt is not a general accuracy estimate or causal
+proof that removing a schema alone improved prose.
+
+Follow-up regression results: **2,783 API passed, 1 skipped**, real network blocked;
+**12 mock-browser cases passed**, including saved/streamed/buffered tool provenance,
+normal model-answer control, mobile geometry and retained privacy badges. Web
+build/lint and four configuration tests passed. Existing CSS selector warnings
+are addressed independently by PR #186, not silently included in this PR.
+
 ## Remaining limits
 
 A calculator proves arithmetic on its supplied expression. It does not prove that
@@ -90,3 +143,7 @@ The screenshots show synthetic mock-browser verification, not provider execution
 ![Unavailable calculator on desktop](screenshots/calculation-refusal-desktop.png)
 
 ![Auto calculation reason on mobile](screenshots/auto-calculation-reason-mobile.png)
+
+![Calculator-authored error on desktop](screenshots/calculator-answer-streamed-desktop.png)
+
+![Calculator-authored error on mobile](screenshots/calculator-answer-streamed-mobile.png)
