@@ -124,6 +124,30 @@ of a live provider response.
 
 ## Verification limits
 
+### Comparison follow-ups
+
+The tool-free comparison surface now reuses the same stored, session-bound
+follow-up check as ordinary chat. Previously a short name/guess request after a
+server-held political question could start comparisons with that question still
+in context. Seven of twenty new request-path cases failed before the fix. All
+twenty now pass, including new topics, untrusted origin text, other-session rows,
+attachments, repeated holds and current search wording. Since comparison has no
+retrieval tools, asking it to search still returns the existing 409 contract.
+
+The standalone follow-up source `ba8e6737343461d2cf1732c1e1b23b026c1a9c74`
+passes 2,782 offline API tests with one existing skip (82 denied sockets, no
+HTTP transport calls). The independent integrated-source suite has 3,245 passes
+and one skip; these are different source trees, not additive counts.
+
+An actual isolated API replay on that standalone SHA first stored a no-search
+policy hold and then sent three comparison follow-ups (name only, guess anyway,
+and search for the name). All three returned 409 before model execution and
+left the transcript unchanged. Gateway completion attempts and app credit delta
+were both zero; the QA transport completion cap was zero. No answer-generation
+or factual-accuracy claim follows from these policy checks. The temporary DB,
+network, files and ports were cleaned and the original data and stopped DB state
+were preserved. Existing comparison UI error handling is unchanged.
+
 Live evidence belongs to its recorded immutable source SHA. The original four-request
 comparison and the later four-turn follow-up run are separate. The subsequent quote
 parser change has deterministic regressions, not a new provider execution.
